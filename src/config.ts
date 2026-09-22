@@ -18,7 +18,7 @@ export interface Config {
   /** Endpoint the questions are posted to; the provider's own unless overridden (tests, proxies). */
   jevUrl: string;
   jevModel: string;
-  /** A second model of the same provider, tried once `jevModel` stops answering (opencode: free, then paid). */
+  /** A second model of the same provider, used once it says `jevModel` is gone (opencode: free, then paid). */
   jevFallbackModel?: string;
   jevTimeoutMs: number;
   /** Below this, Jev's tool decision is ignored and the LLM decides. */

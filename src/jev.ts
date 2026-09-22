@@ -60,6 +60,12 @@ export function resolveUrl(provider: ProviderId, env: Env): string {
 }
 
 const RETRYABLE = new Set([408, 429, 500, 502, 503, 504, 529]);
+/**
+ * What says the model itself is gone, such as a free tier that ended. A timeout, a rate limit or a
+ * server error says nothing about the model, and the switch lasts until the gateway restarts, so
+ * those fail open as they always did.
+ */
+const MODEL_GONE = new Set([404, 410]);
 
 /** Some gateways return choice answers without a confidence; the winning probability stands in. */
 function normalize(result: SystemOneResult<Questions>): SystemOneResult<Questions> {
@@ -74,10 +80,14 @@ function normalize(result: SystemOneResult<Questions>): SystemOneResult<Question
   return { model: result.model, answers, usage: { input_tokens: result.usage?.input_tokens ?? 0, output_tokens: result.usage?.output_tokens ?? 0 } } as SystemOneResult<Questions>;
 }
 
-/** The one call the gateway makes to Jev, for whichever provider is configured. */
+/**
+ * The one call the gateway makes to Jev, for whichever provider is configured. `onFallback` hears
+ * about the switch to the fallback model, which changes what the user pays for.
+ */
 export function createAskJev(
   config: Pick<Config, "jevProvider" | "jevApiKey" | "jevUrl" | "jevFallbackModel" | "jevTimeoutMs">,
   fetchImpl: typeof fetch = fetch,
+  onFallback: (model: string, reason: string) => void = () => {},
 ): AskJev {
   const provider = providers[config.jevProvider];
   if (!config.jevApiKey) {
@@ -85,7 +95,7 @@ export function createAskJev(
   }
   const fallback = config.jevFallbackModel;
   /** Set once the fallback has answered: the primary is not tried again until the gateway restarts. */
-  let onFallback = false;
+  let switched = false;
   const once = async (request: SystemOneRequest<Questions>, model?: string) => {
     const response = await fetchImpl(config.jevUrl, {
       method: "POST",
@@ -117,16 +127,16 @@ export function createAskJev(
     }
   };
   return async (request) => {
-    if (onFallback && fallback) return attempt(request, fallback);
+    if (switched && fallback) return attempt(request, fallback);
     try {
       return await attempt(request);
     } catch (error) {
       const status = (error as { status?: number }).status;
-      // A refused key is the same for every model; anything else may be the model itself, such as a
-      // free tier that ended. The fallback is one plain call: the next request goes straight to it.
-      if (!fallback || status === 401 || status === 403) throw error;
+      // The fallback is one plain call: the next request goes straight to it.
+      if (!fallback || status === undefined || !MODEL_GONE.has(status)) throw error;
       const result = await once(request, fallback);
-      onFallback = true;
+      switched = true;
+      onFallback(fallback, error instanceof Error ? error.message : String(error));
       return result;
     }
   };

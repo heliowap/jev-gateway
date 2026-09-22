@@ -143,11 +143,14 @@ and return the same answers, so the choice is about whose account and billing yo
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `typesafe-ai/jev` | [Vercel dashboard](https://vercel.com/dashboard/ai-gateway/api-keys) |
 | OpenCode | `OPENCODE_API_KEY` | `jev-1.13-free` | [OpenCode Zen](https://dev.opencode.ai/auth) |
 
-OpenCode serves two ids at the same endpoint: `jev-1.13-free` (free, for a limited time) and the
-paid `jev-1.13`. The gateway defaults to the free one and, once it stops answering, switches by
-itself to the paid one for the rest of the gateway's life — no error reaches the agent and nothing
-needs reconfiguring. Setting `JEV_MODEL=jev-1.13` names the paid model as the primary and removes
-the fallback.
+OpenCode serves two ids at the same endpoint: `jev-1.13-free` (free,
+[for a limited time](https://opencode.ai/docs/zen/#jev)) and the paid `jev-1.13`. The gateway
+defaults to the free one. Once OpenCode answers that it is gone (404 or 410), the gateway switches
+to the paid one in the same turn and stays on it until it restarts, so no error reaches the agent.
+The switch is logged as a `jev_fallback` line (`--logs` shows it), and the dashboard names the
+paid model from then on. A timeout, a rate limit or a server error does not switch: those requests
+go to the LLM untouched, as with any other provider. Setting `JEV_MODEL=jev-1.13` names the paid
+model as the primary and removes the fallback.
 
 `jev-codex --setup` (or any other launcher) switches between them and restarts the gateway with the
 new key. To configure it by hand instead, put `JEV_PROVIDER` and the matching key in
@@ -159,9 +162,10 @@ dashboard show which provider is in use.
 With no terminal to ask in (CI, scripts), a launcher does not wait for input: it exits and names the
 variables it looked for.
 
-The TypeSafe path is run against the real API. The OpenRouter, Vercel and OpenCode paths follow
-those providers' published endpoints and are covered by tests, but have not been run with real keys
-yet. The first-run key check will tell you at once if one of them disagrees.
+The TypeSafe and OpenCode paths are run against the real APIs; OpenCode's switch to the paid
+model is covered by tests only, since the free model still answers. The OpenRouter and Vercel paths
+follow those providers' published endpoints and are covered by tests, but have not been run with
+real keys yet. The first-run key check will tell you at once if one of them disagrees.
 
 ## Using it with Codex
 

@@ -125,6 +125,37 @@ describe("falling back to the provider's second model", () => {
     expect(models).toEqual(["jev-1.13-free", "jev-1.13-free", "jev-1.13", "jev-1.13"]);
   });
 
+  it("says once that it switched, with the model it switched to and why", async () => {
+    const config = loadConfig({ OPENCODE_API_KEY: "ock" });
+    const switches: [string, string][] = [];
+    const fetchImpl = (async (_url: string, init: RequestInit) =>
+      JSON.parse(String(init.body)).model === "jev-1.13-free" ? new Response("model not found", { status: 404 }) : Response.json(answer)) as unknown as typeof fetch;
+    const ask = createAskJev(config, fetchImpl, (model, reason) => switches.push([model, reason]));
+    await ask({ ...request, model: config.jevModel });
+    await ask({ ...request, model: config.jevModel });
+    expect(switches).toEqual([["jev-1.13", "404 from OpenCode: model not found"]]);
+  });
+
+  it.each([429, 500, 503])("stays on the free model when it answers %i, which says nothing about the model", async (status) => {
+    const config = loadConfig({ OPENCODE_API_KEY: "ock" });
+    const switches: string[] = [];
+    const { calls, fetchImpl } = capture(() => new Response("busy", { status }));
+    await expect(createAskJev(config, fetchImpl, (model) => switches.push(model))({ ...request, model: config.jevModel })).rejects.toThrow(`${status} from OpenCode`);
+    expect(calls.map((call) => call.body.model)).toEqual(["jev-1.13-free", "jev-1.13-free"]);
+    expect(switches).toEqual([]);
+  });
+
+  it("stays on the free model when it is only slow", async () => {
+    const config = loadConfig({ OPENCODE_API_KEY: "ock" });
+    const models: string[] = [];
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      models.push(JSON.parse(String(init.body)).model);
+      throw new DOMException("The operation was aborted due to timeout", "TimeoutError");
+    }) as unknown as typeof fetch;
+    await expect(createAskJev(config, fetchImpl)({ ...request, model: config.jevModel })).rejects.toThrow(/timeout/);
+    expect(models).toEqual(["jev-1.13-free", "jev-1.13-free"]);
+  });
+
   it("does not trade a refused key for the fallback model", async () => {
     const config = loadConfig({ OPENCODE_API_KEY: "ock" });
     const { calls, fetchImpl } = capture(() => new Response("bad key", { status: 401 }));
