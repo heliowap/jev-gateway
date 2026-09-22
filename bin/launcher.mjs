@@ -44,6 +44,11 @@ export async function runLauncher(spec) {
   const logFile = join(STATE_DIR, `${spec.client}.log`);
   const pidFile = join(STATE_DIR, `${spec.client}.pid`);
 
+  const providers = loadProviders(ROOT);
+  const providerLabels = Object.values(providers).map((p) => p.label).join(", ");
+  const providerKeys = Object.values(providers).map((p) => p.keyEnv);
+  const keysList = `${providerKeys.slice(0, -1).join(", ")} or ${providerKeys.at(-1)}`;
+
   const help = `${spec.name}: ${spec.client} with tool selection routed through Jev
 
   ${spec.name} [${spec.client} args]    start the gateway if needed, then run ${spec.client} through it
@@ -53,13 +58,13 @@ export async function runLauncher(spec) {
   ${spec.name} --logs             follow routing decisions live (use a second terminal)
   ${spec.name} --start            start the gateway without opening ${spec.client}
   ${spec.name} --stop             stop the background gateway
-  ${spec.name} --setup            choose where to reach Jev (TypeSafe, OpenRouter, Vercel) and set the key
+  ${spec.name} --setup            choose where to reach Jev (${providerLabels}) and set the key
   ${spec.name} --print-config     how to point plain \`${spec.client}\` at the gateway permanently
   ${spec.name} --gateway-help     this text (\`--help\` shows ${spec.client}'s own help)
 
 Environment (or ${ENV_FILES.at(-1)}):
   A key for Jev is required. ${spec.name} asks for it the first time and saves it; it can be
-  TYPESAFE_API_KEY, OPENROUTER_API_KEY or AI_GATEWAY_API_KEY (JEV_PROVIDER picks when several are set)
+  ${keysList} (JEV_PROVIDER picks when several are set)
   ${spec.portEnv}   router port for ${spec.client} (default ${spec.defaultPort})
   ${spec.upstreamHelp}
   BROWSER            command --dashboard opens the page with; "none" only prints the URL
@@ -77,7 +82,6 @@ Environment (or ${ENV_FILES.at(-1)}):
   const tailLog = (lines = 15) =>
     existsSync(logFile) ? readFileSync(logFile, "utf8").trimEnd().split("\n").slice(-lines).join("\n") : "";
 
-  const providers = loadProviders(ROOT);
   const envFile = ENV_FILES.at(-1);
 
   /** Ask for the key and adopt the answer in this process, so the gateway it starts inherits it. */
