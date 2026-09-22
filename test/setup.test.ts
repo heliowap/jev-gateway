@@ -93,6 +93,25 @@ describe("validateKey", () => {
     const down = (async () => Promise.reject(new Error("fetch failed"))) as unknown as typeof fetch;
     expect(await validateKey(providers.openrouter, "k", down)).toMatchObject({ ok: false, refused: false, reason: "fetch failed" });
   });
+
+  it("accepts a key when the provider's fallback model answers even though the default does not", async () => {
+    const seen: string[] = [];
+    const fetchImpl = (async (_url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body));
+      seen.push(body.model);
+      return body.model === "jev-1.13-free" ? new Response("model not found", { status: 404 }) : Response.json({ answers: {} });
+    }) as unknown as typeof fetch;
+    expect(await validateKey(providers.opencode, "k", fetchImpl)).toMatchObject({ ok: true });
+    expect(seen).toEqual(["jev-1.13-free", "jev-1.13"]);
+
+    const refused = (async (_url: string, init: RequestInit) => {
+      seen.length = 0;
+      seen.push(JSON.parse(String(init.body)).model);
+      return new Response("bad key", { status: 401 });
+    }) as unknown as typeof fetch;
+    expect(await validateKey(providers.opencode, "k", refused)).toMatchObject({ ok: false, refused: true });
+    expect(seen).toEqual(["jev-1.13-free"]);
+  });
 });
 
 describe("saving and launching", () => {

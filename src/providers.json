@@ -22,5 +22,14 @@
     "keyUrl": "https://vercel.com/dashboard/ai-gateway/api-keys",
     "url": "https://ai-gateway.vercel.sh/typesafe/v1/systemone",
     "model": "typesafe-ai/jev"
+  },
+  "opencode": {
+    "label": "OpenCode",
+    "note": "Jev through your OpenCode Zen key: free model, paid as automatic fallback",
+    "keyEnv": "OPENCODE_API_KEY",
+    "keyUrl": "https://dev.opencode.ai/auth",
+    "url": "https://opencode.ai/zen/v1/systemone",
+    "model": "jev-1.13-free",
+    "fallbackModel": "jev-1.13"
   }
 }

@@ -16,6 +16,7 @@ const app = createApp({
 });
 
 serve({ fetch: app.fetch, hostname: config.host, port: config.port }, ({ port }) => {
-  console.log(`jev-gateway listening on http://localhost:${port} → ${config.upstreamBaseUrl} (jev: ${config.jevModel} via ${config.jevProvider})`);
+  const fallback = config.jevFallbackModel ? ` → fallback ${config.jevFallbackModel}` : "";
+  console.log(`jev-gateway listening on http://localhost:${port} → ${config.upstreamBaseUrl} (jev: ${config.jevModel}${fallback} via ${config.jevProvider})`);
   console.log(`dashboard: http://localhost:${port}/dashboard`);
 });

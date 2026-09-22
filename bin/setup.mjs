@@ -43,17 +43,24 @@ export function saveEnv(file, values) {
 /** One real question to Jev: the only way to know a key works before an agent depends on it. */
 export async function validateKey(provider, key, fetchImpl = fetch) {
   const startedAt = Date.now();
-  try {
-    const response = await fetchImpl(provider.url, {
+  const ask = (model) =>
+    fetchImpl(provider.url, {
       method: "POST",
       headers: { authorization: `Bearer ${key}`, "content-type": "application/json", "x-title": "jev-gateway" },
       body: JSON.stringify({
-        model: provider.model,
+        model,
         state: "jev-gateway setup check",
         questions: { ok: { type: "noul", instructions: "Is this a setup check?" } },
       }),
       signal: AbortSignal.timeout(15_000),
     });
+  try {
+    let response = await ask(provider.model);
+    // The default model may be gone (a free tier that ended) while the key itself is fine; a
+    // refused key is the same for every model, so only anything else is worth the second call.
+    if (!response.ok && provider.fallbackModel && response.status !== 401 && response.status !== 403) {
+      response = await ask(provider.fallbackModel);
+    }
     if (response.ok) return { ok: true, ms: Date.now() - startedAt };
     const detail = (await response.text().catch(() => "")).replace(/\s+/g, " ").slice(0, 160);
     return { ok: false, refused: response.status === 401 || response.status === 403, reason: `${response.status} ${detail}`.trim() };

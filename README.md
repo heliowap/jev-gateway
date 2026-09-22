@@ -14,9 +14,9 @@ Anthropic or Google Gemini APIs.
 
 ## Quick start
 
-You need Node.js 22.15 or newer, a key for Jev (from TypeSafe, OpenRouter or Vercel AI Gateway, see
-[Where Jev runs](#where-jev-runs)), and Codex, Claude Code, and/or OpenCode already installed and
-logged in.
+You need Node.js 22.15 or newer, a key for Jev (from TypeSafe, OpenRouter, Vercel AI Gateway or
+OpenCode, see [Where Jev runs](#where-jev-runs)), and Codex, Claude Code, and/or OpenCode already
+installed and logged in.
 
 **1. Install**
 
@@ -44,7 +44,8 @@ Where do you want to reach Jev?
   1) TypeSafe: the official API, direct from the makers of Jev
   2) OpenRouter: Jev through your OpenRouter account and credits
   3) Vercel AI Gateway: Jev through your Vercel AI Gateway key and billing
-Choose 1-3 [1]:
+  4) OpenCode: Jev through your OpenCode Zen key: free model, paid as automatic fallback
+Choose 1-4 [1]:
 Paste your TypeSafe API key (input is hidden):
 The key works (Jev answered in 712 ms).
 ```
@@ -132,7 +133,7 @@ is only meaningful if you do similar work in both states.
 
 ## Where Jev runs
 
-Jev is served by TypeSafe and by two gateways that resell it. All three take the same questions
+Jev is served by TypeSafe and by three gateways that resell it. All four take the same questions
 and return the same answers, so the choice is about whose account and billing you want to use.
 
 | Provider | Key variable | Default model | Get a key |
@@ -140,6 +141,13 @@ and return the same answers, so the choice is about whose account and billing yo
 | TypeSafe (official) | `TYPESAFE_API_KEY` | `jev-latest` | [typesafe.ai](https://typesafe.ai) |
 | OpenRouter | `OPENROUTER_API_KEY` | `typesafe/jev-1.13` | [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `typesafe-ai/jev` | [Vercel dashboard](https://vercel.com/dashboard/ai-gateway/api-keys) |
+| OpenCode | `OPENCODE_API_KEY` | `jev-1.13-free` | [OpenCode Zen](https://dev.opencode.ai/auth) |
+
+OpenCode serves two ids at the same endpoint: `jev-1.13-free` (free, for a limited time) and the
+paid `jev-1.13`. The gateway defaults to the free one and, once it stops answering, switches by
+itself to the paid one for the rest of the gateway's life — no error reaches the agent and nothing
+needs reconfiguring. Setting `JEV_MODEL=jev-1.13` names the paid model as the primary and removes
+the fallback.
 
 `jev-codex --setup` (or any other launcher) switches between them and restarts the gateway with the
 new key. To configure it by hand instead, put `JEV_PROVIDER` and the matching key in
@@ -148,12 +156,12 @@ it finds, TypeSafe's first. `JEV_MODEL` picks another model; an id written for o
 ignored under another, because the providers name their models differently. `--status` and the
 dashboard show which provider is in use.
 
-With no terminal to ask in (CI, scripts), a launcher does not wait for input: it exits and names
-the variables it looked for.
+With no terminal to ask in (CI, scripts), a launcher does not wait for input: it exits and names the
+variables it looked for.
 
-The TypeSafe path is run against the real API. The OpenRouter and Vercel paths follow those
-providers' published endpoints and are covered by tests, but have not been run with real keys yet.
-The first-run key check will tell you at once if one of them disagrees.
+The TypeSafe path is run against the real API. The OpenRouter, Vercel and OpenCode paths follow
+those providers' published endpoints and are covered by tests, but have not been run with real keys
+yet. The first-run key check will tell you at once if one of them disagrees.
 
 ## Using it with Codex
 
@@ -410,7 +418,7 @@ list. The ones worth knowing:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `TYPESAFE_API_KEY`, `OPENROUTER_API_KEY` or `AI_GATEWAY_API_KEY` | one is required | The key for Jev; the launchers ask for it on first run |
+| `TYPESAFE_API_KEY`, `OPENROUTER_API_KEY`, `AI_GATEWAY_API_KEY` or `OPENCODE_API_KEY` | one is required | The key for Jev; the launchers ask for it on first run |
 | `JEV_PROVIDER` | whichever key is set | `typesafe`, `openrouter` or `vercel` |
 | `JEV_MIN_CONFIDENCE` | `0.7` | Below this confidence, the LLM decides. Lower it to route more, raise it to be more careful |
 | `JEV_ARG_MIN_CERTAINTY` | `0.8` | Every argument must reach this for a `direct` answer |

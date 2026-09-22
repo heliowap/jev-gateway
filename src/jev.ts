@@ -1,14 +1,27 @@
 import type { Questions, SystemOneRequest, SystemOneResult } from "@typesafe-ai/sdk";
 import type { Config } from "./config.js";
 import type { AskJev } from "./decide.js";
-import providers from "./providers.json" with { type: "json" };
+import table from "./providers.json" with { type: "json" };
+
+/** One row of the provider table: where Jev runs, which key gets there, and what to call it. */
+interface Provider {
+  label: string;
+  note: string;
+  keyEnv: string;
+  keyUrl: string;
+  url: string;
+  model: string;
+  /** A model for the same endpoint to switch to once `model` stops answering; absent for most providers. */
+  fallbackModel?: string;
+}
 
 /**
- * Where Jev can be reached. TypeSafe's own API, and two gateways that resell it: all three take
+ * Where Jev can be reached. TypeSafe's own API, and gateways that resell it: all of them take
  * the same request body and return the same answers, so one transport serves them. The table is
  * JSON because the launchers' setup wizard (plain .mjs, no build step) reads the same file.
  */
-export type ProviderId = keyof typeof providers;
+const providers = table as Record<keyof typeof table, Provider>;
+export type ProviderId = keyof typeof table;
 export const PROVIDERS = providers;
 export const isProvider = (value: string): value is ProviderId => value in providers;
 
@@ -26,12 +39,12 @@ export function resolveProvider(env: Env): ProviderId {
 }
 
 /**
- * Model ids live in different namespaces: TypeSafe's have no slash (`jev-latest`), the gateways'
- * do (`typesafe/jev-1.13`). A JEV_MODEL written for one provider is ignored under another, so
- * switching provider never sends an id the new one cannot know.
+ * Model ids live in different namespaces: TypeSafe's and OpenCode's have no slash (`jev-latest`,
+ * `jev-1.13-free`), the reselling gateways' do (`typesafe/jev-1.13`). A JEV_MODEL written for one
+ * provider is ignored under another, so switching provider never sends an id the new one cannot know.
  */
 export function resolveModel(provider: ProviderId, requested: string | undefined): string {
-  const fits = requested && requested.includes("/") === (provider !== "typesafe");
+  const fits = requested && requested.includes("/") === providers[provider].model.includes("/");
   return fits ? requested : providers[provider].model;
 }
 
@@ -62,12 +75,18 @@ function normalize(result: SystemOneResult<Questions>): SystemOneResult<Question
 }
 
 /** The one call the gateway makes to Jev, for whichever provider is configured. */
-export function createAskJev(config: Pick<Config, "jevProvider" | "jevApiKey" | "jevUrl" | "jevTimeoutMs">, fetchImpl: typeof fetch = fetch): AskJev {
+export function createAskJev(
+  config: Pick<Config, "jevProvider" | "jevApiKey" | "jevUrl" | "jevFallbackModel" | "jevTimeoutMs">,
+  fetchImpl: typeof fetch = fetch,
+): AskJev {
   const provider = providers[config.jevProvider];
   if (!config.jevApiKey) {
     throw new Error(`No API key for Jev: set ${provider.keyEnv} (${provider.label}), or run jev-codex --setup.`);
   }
-  const once = async (request: SystemOneRequest<Questions>) => {
+  const fallback = config.jevFallbackModel;
+  /** Set once the fallback has answered: the primary is not tried again until the gateway restarts. */
+  let onFallback = false;
+  const once = async (request: SystemOneRequest<Questions>, model?: string) => {
     const response = await fetchImpl(config.jevUrl, {
       method: "POST",
       headers: {
@@ -77,7 +96,7 @@ export function createAskJev(config: Pick<Config, "jevProvider" | "jevApiKey" | 
         "http-referer": "https://github.com/vinilana/jev-gateway",
         "x-title": "jev-gateway",
       },
-      body: JSON.stringify(request),
+      body: JSON.stringify(model === undefined ? request : { ...request, model }),
       signal: AbortSignal.timeout(config.jevTimeoutMs),
     });
     if (!response.ok) {
@@ -87,14 +106,28 @@ export function createAskJev(config: Pick<Config, "jevProvider" | "jevApiKey" | 
     return normalize((await response.json()) as SystemOneResult<Questions>);
   };
   // One fast retry only: past that, failing open to the LLM is quicker.
-  return async (request) => {
+  const attempt = async (request: SystemOneRequest<Questions>, model?: string) => {
     try {
-      return await once(request);
+      return await once(request, model);
     } catch (error) {
       const status = (error as { status?: number }).status;
       if (status !== undefined && !RETRYABLE.has(status)) throw error;
       await new Promise((done) => setTimeout(done, 100));
-      return once(request);
+      return once(request, model);
+    }
+  };
+  return async (request) => {
+    if (onFallback && fallback) return attempt(request, fallback);
+    try {
+      return await attempt(request);
+    } catch (error) {
+      const status = (error as { status?: number }).status;
+      // A refused key is the same for every model; anything else may be the model itself, such as a
+      // free tier that ended. The fallback is one plain call: the next request goes straight to it.
+      if (!fallback || status === 401 || status === 403) throw error;
+      const result = await once(request, fallback);
+      onFallback = true;
+      return result;
     }
   };
 }
