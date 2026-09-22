@@ -1,10 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 // @ts-ignore: bin/ is plain JavaScript outside the tsconfig include; resolved at runtime.
 const clients = await import("../bin/clients.mjs");
+const { detectOpencode, parseJsonc } = clients as any;
 
 interface LauncherSpec {
   name: string;
@@ -25,14 +28,30 @@ const claude = clients.claude as LauncherSpec;
 const origin = "http://127.0.0.1:8791";
 const launcherBin = fileURLToPath(new URL("../bin/jev-opencode.mjs", import.meta.url));
 
-const managedEnv = ["JEV_OPENCODE_UPSTREAM_BASE_URL", "JEV_OPENCODE_MODEL", "JEV_CODEX_UPSTREAM_BASE_URL", "JEV_CLAUDE_UPSTREAM_BASE_URL", "CODEX_HOME"] as const;
+const managedEnv = [
+  "JEV_OPENCODE_UPSTREAM_BASE_URL",
+  "JEV_OPENCODE_MODEL",
+  "JEV_OPENCODE_PORT",
+  "JEV_CODEX_UPSTREAM_BASE_URL",
+  "JEV_CLAUDE_UPSTREAM_BASE_URL",
+  "CODEX_HOME",
+  "XDG_CONFIG_HOME",
+  "OPENCODE_CONFIG",
+  "OPENCODE_CONFIG_DIR",
+  "OPENAI_API_KEY",
+  "OPENCODE_API_KEY",
+] as const;
 const savedEnv: Record<string, string | undefined> = {};
+let scratch: string;
 
 beforeEach(() => {
   for (const key of managedEnv) {
     savedEnv[key] = process.env[key];
     delete process.env[key];
   }
+  // The developer's own ~/.config/opencode must not decide what these tests see.
+  scratch = mkdtempSync(join(tmpdir(), "jev-opencode-"));
+  process.env.XDG_CONFIG_HOME = join(scratch, "config");
 });
 
 afterEach(() => {
@@ -41,7 +60,27 @@ afterEach(() => {
     if (value === undefined) delete process.env[key];
     else process.env[key] = value;
   }
+  rmSync(scratch, { recursive: true, force: true });
 });
+
+/** A project with its own opencode.jsonc; `.git` stops the walk up at the project root. */
+const project = (config: string) => {
+  const dir = join(scratch, "project");
+  mkdirSync(join(dir, ".git"), { recursive: true });
+  writeFileSync(join(dir, "opencode.jsonc"), config);
+  return dir;
+};
+
+const globalConfig = (config: object) => {
+  mkdirSync(join(scratch, "config", "opencode"), { recursive: true });
+  writeFileSync(join(scratch, "config", "opencode", "opencode.json"), JSON.stringify(config));
+};
+
+const cliProxy = {
+  npm: "@ai-sdk/openai-compatible",
+  options: { baseURL: "http://127.0.0.1:8317/v1", apiKey: "sk-in-the-file" },
+  models: { "custom-model": { name: "Custom" } },
+};
 
 const inlineConfig = (originOverride = origin) => {
   const env = opencode.env?.(originOverride);
@@ -134,7 +173,112 @@ describe("jev-opencode spec", () => {
   });
 });
 
+describe("jev-opencode follows the user's OpenCode config", () => {
+  it("sends opencode/ and opencode-go/ models to Zen and moves only the baseURL of both providers", () => {
+    for (const model of ["opencode/some-zen-model", "opencode-go/some-go-model"]) {
+      globalConfig({ model });
+      const setup = detectOpencode(process.env, scratch);
+      expect(setup.upstream).toBe("https://opencode.ai/zen/v1");
+      expect(setup.model).toBeUndefined();
+      const config = inlineConfig();
+      // The user's model stays the default, so the model id the user picked decides what is billed.
+      expect(config.model).toBeUndefined();
+      expect(config.provider).toEqual({
+        opencode: { options: { baseURL: `${origin}/v1` } },
+        "opencode-go": { options: { baseURL: `${origin}/v1` } },
+      });
+    }
+  });
+
+  it("forwards to a custom provider's own address and never copies its key", () => {
+    const dir = project(`{
+      // a local proxy, as OpenCode's docs configure one
+      "model": "cli_proxy/custom-model",
+      "provider": { "cli_proxy": ${JSON.stringify(cliProxy)}, },
+    }`);
+    expect(detectOpencode(process.env, dir)).toEqual({ upstream: "http://127.0.0.1:8317/v1", rebind: ["cli_proxy"] });
+    // The spec reads from the working directory; OPENCODE_CONFIG reaches the same file from here.
+    process.env.OPENCODE_CONFIG = join(dir, "opencode.jsonc");
+    expect(inlineConfig().provider).toEqual({ cli_proxy: { options: { baseURL: `${origin}/v1` } } });
+    const raw = opencode.env!(origin).OPENCODE_CONFIG_CONTENT as string;
+    expect(raw).not.toContain("sk-in-the-file");
+    expect(raw).not.toContain("{env:OPENAI_API_KEY}");
+  });
+
+  it("merges a project entry into the global one for the same provider", () => {
+    globalConfig({ provider: { cli_proxy: cliProxy } });
+    const dir = project(`{ "model": "cli_proxy/other", "provider": { "cli_proxy": { "models": { "other": {} } } } }`);
+    expect(detectOpencode(process.env, dir).upstream).toBe("http://127.0.0.1:8317/v1");
+  });
+
+  it("resolves {env:...} in a baseURL and skips one it cannot turn into a URL", () => {
+    const withEnv = { ...cliProxy, options: { baseURL: "{env:PROXY_URL}/v1" } };
+    globalConfig({ model: "cli_proxy/custom-model", provider: { cli_proxy: withEnv } });
+    expect(detectOpencode({ ...process.env, PROXY_URL: "http://10.0.0.2:4000" }, scratch).upstream).toBe("http://10.0.0.2:4000/v1");
+    expect(detectOpencode(process.env, scratch).upstream).toBe("https://api.openai.com/v1");
+  });
+
+  it("never takes the gateway's own address, or its own provider, as the upstream", () => {
+    const pointedAtGateway = { ...cliProxy, options: { baseURL: `${origin}/v1` } };
+    globalConfig({ model: "cli_proxy/custom-model", provider: { cli_proxy: pointedAtGateway } });
+    expect(detectOpencode(process.env, scratch).upstream).toBe("https://api.openai.com/v1");
+    process.env.JEV_OPENCODE_PORT = "9100";
+    expect(detectOpencode(process.env, scratch).upstream).toBe(`${origin}/v1`);
+    delete process.env.JEV_OPENCODE_PORT;
+
+    globalConfig({ model: "jev-gateway/gpt-5", provider: { "jev-gateway": { ...cliProxy, options: { baseURL: "http://127.0.0.1:9999/v1" } } } });
+    expect(detectOpencode(process.env, scratch).upstream).toBe("https://api.openai.com/v1");
+  });
+
+  it("follows only the default model's provider, not any custom provider in the file", () => {
+    globalConfig({ model: "anthropic/claude-sonnet", provider: { cli_proxy: cliProxy } });
+    expect(detectOpencode(process.env, scratch)).toEqual({ upstream: "https://api.openai.com/v1", model: "gpt-5" });
+  });
+
+  it("with no provider to follow, pays the LLM with an OpenCode key only when there is no OpenAI key", () => {
+    process.env.OPENCODE_API_KEY = "zen-key";
+    expect(detectOpencode(process.env, scratch).upstream).toBe("https://opencode.ai/zen/v1");
+    expect(inlineConfig().provider.opencode.options).toEqual({ baseURL: `${origin}/v1` });
+    process.env.OPENAI_API_KEY = "openai-key";
+    expect(detectOpencode(process.env, scratch)).toEqual({ upstream: "https://api.openai.com/v1", model: "gpt-5" });
+  });
+
+  it("lets the explicit settings win over the config", () => {
+    globalConfig({ model: "opencode/some-zen-model" });
+    process.env.JEV_OPENCODE_UPSTREAM_BASE_URL = "https://llm.test/v1";
+    expect(detectOpencode(process.env, scratch)).toEqual({ upstream: "https://llm.test/v1", rebind: ["opencode", "opencode-go"] });
+    process.env.JEV_OPENCODE_MODEL = "gpt-5-mini";
+    expect(detectOpencode(process.env, scratch)).toEqual({ upstream: "https://llm.test/v1", model: "gpt-5-mini" });
+    expect(inlineConfig().model).toBe("jev-gateway/gpt-5-mini");
+  });
+
+  it("prints a rebind snippet, with the real address to start the gateway with for a custom provider", () => {
+    globalConfig({ model: "opencode/some-zen-model" });
+    const zenHelp = opencode.configHelp(origin);
+    expect(JSON.parse(zenHelp.slice(zenHelp.indexOf("{"), zenHelp.lastIndexOf("}") + 1)).provider.opencode.options.baseURL).toBe(`${origin}/v1`);
+    expect(zenHelp).not.toContain("JEV_OPENCODE_UPSTREAM_BASE_URL");
+
+    globalConfig({ model: "cli_proxy/custom-model", provider: { cli_proxy: cliProxy } });
+    const help = opencode.configHelp(origin);
+    expect(help).toContain("JEV_OPENCODE_UPSTREAM_BASE_URL=http://127.0.0.1:8317/v1 jev-opencode --start");
+    expect(help).not.toContain("sk-in-the-file");
+  });
+
+  it("reads JSONC without touching strings that look like comments or trailing commas", () => {
+    const text = `{\n  // comment\n  "url": "https://opencode.ai/zen/v1", /* block */\n  "odd": "a,}\\"//",\n  "list": [1, 2,],\n}`;
+    expect(parseJsonc(text)).toEqual({ url: "https://opencode.ai/zen/v1", odd: 'a,}"//', list: [1, 2] });
+  });
+
+  it("ignores a config file that does not parse", () => {
+    const dir = project(`{ "model": "opencode/x", oops }`);
+    expect(detectOpencode(process.env, dir).upstream).toBe("https://api.openai.com/v1");
+  });
+});
+
 describe("jev-opencode entrypoint", () => {
+  // No saved key in ~/.jev-gateway/.env and no OpenCode config of the developer's reach the launcher.
+  const isolatedEnv = () => ({ PATH: process.env.PATH, HOME: scratch, XDG_CONFIG_HOME: join(scratch, "config"), JEV_SKIP_PROJECT_ENV: "1" });
+
   it("is registered in package.json with a runnable script", () => {
     const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as any;
     expect(pkg.bin["jev-opencode"]).toBe("bin/jev-opencode.mjs");
@@ -142,13 +286,13 @@ describe("jev-opencode entrypoint", () => {
   });
 
   it("--gateway-help describes the opencode launcher without starting anything", () => {
-    const out = execFileSync(process.execPath, [launcherBin, "--gateway-help"], { encoding: "utf8", timeout: 30_000 });
+    const out = execFileSync(process.execPath, [launcherBin, "--gateway-help"], { encoding: "utf8", timeout: 30_000, env: isolatedEnv() });
     expect(out).toContain("jev-opencode: opencode with tool selection routed through Jev");
     expect(out).toContain("--print-config");
   });
 
   it("--print-config prints the gateway-rooted provider config without starting anything", () => {
-    const out = execFileSync(process.execPath, [launcherBin, "--print-config"], { encoding: "utf8", timeout: 30_000 });
+    const out = execFileSync(process.execPath, [launcherBin, "--print-config"], { encoding: "utf8", timeout: 30_000, env: isolatedEnv() });
     expect(out).toContain("http://127.0.0.1:8791/v1");
     expect(out).toContain("jev-gateway");
   });

@@ -200,12 +200,10 @@ chaining, namespaces, or `additional_tools` behavior is assumed.
 jev-opencode   # use it exactly like `opencode`
 ```
 
-That starts the gateway on `http://127.0.0.1:8791` if needed, then runs `opencode` through it
-with a `jev-gateway` custom provider injected via `OPENCODE_CONFIG_CONTENT`. Your
-`~/.config/opencode` files are never written, and every `opencode` flag (including `-m`) forwards
-untouched. The launcher uses stable `@ai-sdk/openai-compatible`, so OpenCode speaks
-`POST /v1/chat/completions` off `http://127.0.0.1:8791/v1` by default, an endpoint the gateway
-already routes.
+That starts the gateway on `http://127.0.0.1:8791` if needed, then runs `opencode` through it,
+pointed at the gateway through `OPENCODE_CONFIG_CONTENT`. The launcher reads your OpenCode config
+to decide where the gateway forwards (see below). Your `~/.config/opencode` files are never
+written, and every `opencode` flag (including `-m`) forwards untouched.
 
 Manage it like the other launchers:
 
@@ -218,14 +216,49 @@ jev-opencode --status         # is the gateway running, and where does it forwar
 jev-opencode --dashboard      # open the monitoring dashboard in your browser
 ```
 
-### Credentials and upstream
+### Where OpenCode traffic goes
+
+The launcher reads your OpenCode config (global, `OPENCODE_CONFIG`, the project's
+`opencode.json`/`opencode.jsonc`, `OPENCODE_CONFIG_DIR`) and follows the provider of your default
+`model`. The first row that applies wins:
+
+| Your setup | The gateway forwards to | What the launched OpenCode gets |
+| --- | --- | --- |
+| `JEV_OPENCODE_MODEL` is set | `JEV_OPENCODE_UPSTREAM_BASE_URL`, else `https://api.openai.com/v1` | A `jev-gateway` provider with that model, keyed by `{env:OPENAI_API_KEY}` |
+| Default model on `opencode/` or `opencode-go/` | `https://opencode.ai/zen/v1` | The `baseURL` of both providers moved to the gateway |
+| Default model on an `@ai-sdk/openai-compatible` provider | That provider's `baseURL` (`{env:...}` resolved) | That provider's `baseURL` moved to the gateway |
+| None of the above, `OPENAI_API_KEY` set | `https://api.openai.com/v1` | `jev-gateway/gpt-5`, as before |
+| None of the above, only `OPENCODE_API_KEY` set | `https://opencode.ai/zen/v1` | The `baseURL` of `opencode` and `opencode-go` moved to the gateway |
+| Nothing set | `https://api.openai.com/v1` | `jev-gateway/gpt-5`, as before |
+
+`JEV_OPENCODE_UPSTREAM_BASE_URL` replaces the address in every row.
+
+When a provider is moved, only its `baseURL` changes. Its key and models stay as you set them, so
+OpenCode sends the credential it already has (`opencode auth login`, `{env:...}`, or a key in the
+file) and the gateway forwards it. The launcher never copies a key. Every agent and subagent on
+that provider goes through Jev. Agents on other providers do not.
+
+OpenCode Zen and OpenCode Go use the same endpoint and the same key. The model id decides what is
+billed: Go models count against your subscription, Zen models against your balance. The launcher
+keeps your model, so it never picks what you pay for. With only `OPENCODE_API_KEY` set and no
+default model, OpenCode chooses its default as it would without the launcher. That key can also be
+the key for Jev (`JEV_PROVIDER=opencode`); the paid `jev-1.13` fallback is charged to your Zen
+balance, not to a Go subscription.
+
+A default model on a provider the launcher cannot follow (Anthropic, Google, a `{file:...}`
+address) falls through to the OpenAI rows, as before. Detection reads the config from the working
+directory, so one gateway serves one upstream: moving to a project whose config leads elsewhere
+asks for `jev-opencode --stop` first.
+
+Unit-tested against config files. The launch with a real OpenCode moving `opencode`/`opencode-go`
+has not been run yet.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `TYPESAFE_API_KEY` | required | Authorizes the Jev tool-selection call only. Never sent as the LLM upstream credential |
-| `OPENAI_API_KEY` | your key | Your LLM credential. OpenCode resolves `{env:OPENAI_API_KEY}` and the gateway forwards it untouched to the LLM upstream |
-| `JEV_OPENCODE_UPSTREAM_BASE_URL` | `https://api.openai.com/v1` | Where the gateway forwards OpenCode traffic: your LLM provider, not the TypeSafe endpoint |
-| `JEV_OPENCODE_MODEL` | `gpt-5` | Model selected as `jev-gateway/<model>` |
+| `OPENAI_API_KEY` | your key | On the OpenAI rows, your LLM credential. OpenCode resolves `{env:OPENAI_API_KEY}` and the gateway forwards it untouched |
+| `OPENCODE_API_KEY` | unset | On the Zen rows, your LLM credential. It may also be the key for Jev |
+| `JEV_OPENCODE_UPSTREAM_BASE_URL` | follows the table | Where the gateway forwards OpenCode traffic: your LLM provider, not the Jev endpoint |
+| `JEV_OPENCODE_MODEL` | unset | Skip the config and use `jev-gateway/<model>` |
 | `JEV_OPENCODE_PORT` | `8791` | Router port for OpenCode |
 
 The gateway forwards the client's `Authorization` header to the LLM upstream. A launcher-spawned
@@ -235,7 +268,11 @@ provider key with `UPSTREAM_API_KEY`; see "Running it as a server" below.)
 
 ### Manual setup
 
-Keep the gateway running, then point plain `opencode` at it with a file, so no shell quoting is needed:
+Keep the gateway running, then point plain `opencode` at it with a file, so no shell quoting is needed.
+`--print-config` prints the snippet for your setup: the moved `baseURL` when the launcher follows a
+provider, or the `jev-gateway` provider below otherwise. After moving a custom provider's
+`baseURL` in the file, its real address is no longer there to detect, so start the gateway with
+`JEV_OPENCODE_UPSTREAM_BASE_URL` set to it; `--print-config` shows the command.
 
 ```bash
 jev-opencode --start
