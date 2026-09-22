@@ -419,7 +419,7 @@ list. The ones worth knowing:
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `TYPESAFE_API_KEY`, `OPENROUTER_API_KEY`, `AI_GATEWAY_API_KEY` or `OPENCODE_API_KEY` | one is required | The key for Jev; the launchers ask for it on first run |
-| `JEV_PROVIDER` | whichever key is set | `typesafe`, `openrouter` or `vercel` |
+| `JEV_PROVIDER` | whichever key is set | `typesafe`, `openrouter`, `vercel` or `opencode` |
 | `JEV_MIN_CONFIDENCE` | `0.7` | Below this confidence, the LLM decides. Lower it to route more, raise it to be more careful |
 | `JEV_ARG_MIN_CERTAINTY` | `0.8` | Every argument must reach this for a `direct` answer |
 | `JEV_DIRECT_CALLS` | `true` | Set to `false` so the gateway never answers without the LLM |
