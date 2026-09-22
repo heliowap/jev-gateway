@@ -196,8 +196,10 @@ const REASONS = {
 const params = new URLSearchParams(location.search);
 const key = params.get("key");
 const ownPort = location.port || (location.protocol === "https:" ? "443" : "80");
-// The launchers' default ports and the standalone server's; `?peers=8795,8796` adds custom ones.
-const ports = new Set([ownPort, "8787", "8788", "8789", "8790", "8791", ...(params.get("peers") ?? "").split(",").filter(Boolean)]);
+// The launchers' default ports and the standalone server's; `?peers=8795,8796` adds custom ones,
+// `?peers=none` watches this router only.
+const peers = params.get("peers");
+const ports = new Set(peers === "none" ? [ownPort] : [ownPort, "8787", "8788", "8789", "8790", "8791", ...(peers ?? "").split(",").filter(Boolean)]);
 const sources = [...ports].map((port) => ({
   port,
   own: port === ownPort,
@@ -205,7 +207,7 @@ const sources = [...ports].map((port) => ({
   url: port === ownPort ? "/dashboard/events?" + (key ? "key=" + encodeURIComponent(key) + "&" : "") : `${location.protocol}//${location.hostname}:${port}/dashboard/events?`,
   // Same rule for the routing switch: a bodyless POST, so crossing ports needs no preflight.
   routingUrl: port === ownPort ? "/dashboard/routing?" + (key ? "key=" + encodeURIComponent(key) + "&" : "") : `${location.protocol}//${location.hostname}:${port}/dashboard/routing?`,
-  events: [], lastSeq: 0, router: undefined, up: false, seen: false, misses: 0,
+  events: [], lastSeq: 0, router: undefined, up: false, seen: false, misses: 0, wait: 0,
 }));
 
 const view = { client: "all", range: RANGES[1][1] };
@@ -238,8 +240,9 @@ function ago(ms) {
 }
 
 async function poll(source) {
-  // A port nobody ever answered on is probably just not in use: look again, but rarely.
-  if (!source.own && !source.seen && source.misses++ % 5 !== 0) return;
+  // A port nobody ever answered on is probably just not in use: look again, less often each time
+  // and at most once a minute, since every refused probe is an error line in the browser console.
+  if (!source.own && !source.seen && source.wait-- > 0) return;
   try {
     const response = await fetch(source.url + "since=" + source.lastSeq, { signal: AbortSignal.timeout(1500) });
     if (!response.ok) throw new Error(String(response.status));
@@ -255,6 +258,7 @@ async function poll(source) {
     source.up = source.seen = true;
   } catch {
     source.up = false;
+    if (!source.seen) source.wait = Math.min(30, 5 * ++source.misses);
   }
 }
 

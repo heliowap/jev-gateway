@@ -103,6 +103,11 @@ This opens `http://localhost:8790/dashboard`. If no browser window appears, past
 your browser. One page shows each gateway (Codex, Claude, and OpenCode) and refreshes every
 2 seconds.
 
+To find the other gateways, the page tries their default ports. A port that never answered is
+tried again after 10 seconds, then less often, down to once a minute; each try that finds nothing
+shows as a refused connection in the browser console. Add `?peers=none` to the address to watch
+only the gateway that serves the page.
+
 You will see:
 
 - **A status per gateway:** Routing, Passthrough only, Jev is failing, Idle, Baseline, or Offline,
