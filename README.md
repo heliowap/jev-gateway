@@ -184,10 +184,11 @@ free to ignore. Expect better tool picks on large tool lists, not lower cost or 
 
 ## Using it with OpenCode
 
-The gateway's request handling was tested with stable OpenCode v1.18.31. The launcher can read
-v2's local API for config discovery, but v2 agent traffic has not been tested. No
-`previous_response_id` chaining, namespaces, or `additional_tools` behavior is assumed.
-The provider-following behavior below is unit-tested, not yet run with a real OpenCode session.
+The gateway's request handling was tested with stable OpenCode v1.18.31. On v2.0.16, a real
+Zen session reached the gateway, but a project with a Go default model started a Zen gateway
+because this branch did not discover the selected model. That Go session would bypass the gateway.
+[#43](https://github.com/vinilana/jev-gateway/pull/43) addresses v2 startup and discovery. No
+`previous_response_id` chaining, namespaces, or `additional_tools` behavior is assumed here.
 
 **Quick path**
 
@@ -278,10 +279,11 @@ OpenCode sends the credential it already has (`opencode auth login`, `{env:...}`
 file) and the gateway forwards it. The launcher never copies a key. Every agent and subagent
 using that provider goes through Jev. Agents on other providers do not.
 
-Zen and Go use separate upstreams. The launcher follows only the selected provider, so a Go
-model is not sent to the Zen endpoint by this setup. Billing with a real OpenCode login has not
-been verified. `OPENCODE_API_KEY` is an LLM credential here; Jev still needs one of the keys
-listed in [Where Jev runs](#where-jev-runs).
+Zen and Go use separate upstreams. When the selected provider is detected, the launcher moves
+only that provider, so a Go model is not sent to Zen by this setup. The v2 discovery limit above
+can leave Go traffic outside the gateway. Billing with a real OpenCode login has not been verified.
+`OPENCODE_API_KEY` is an LLM credential here; Jev still needs one of the keys listed in
+[Where Jev runs](#where-jev-runs).
 
 An unsupported provider (such as Anthropic or Google), a URL with a token in its path, query, or
 fragment, an unresolved `{env:...}` or `{file:...}` address, or a gateway address cannot be
@@ -289,9 +291,11 @@ followed. The launcher then uses a fallback row. Detection uses the working dire
 gateway serves one upstream. Moving to a project whose config leads elsewhere requires
 `jev-opencode --stop` first.
 
-The detection and config changes are unit-tested with stub OpenCode responses and config.
-A real OpenCode launch that moves either built-in provider, retains its saved credential, and
-confirms its billing has not been run yet.
+The detection and config changes are unit-tested with stub OpenCode responses and config. On
+2026-09-24, a real v2.0.16 Zen session using `glm-5.3-flash` returned `GATEWAY_OK` through this
+gateway, which recorded HTTP 200. Its coverage notice incorrectly said that the session bypassed
+the gateway. Go-default discovery on this branch failed as described above; a real Go launch and
+billing have not been verified on this branch. #43 reports separate real Go end-to-end tests.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
