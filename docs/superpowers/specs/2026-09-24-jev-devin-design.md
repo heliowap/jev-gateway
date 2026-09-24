@@ -14,7 +14,10 @@ through a local dumping proxy.
 
 Setting `WINDSURF_API_SERVER_URL=http://127.0.0.1:PORT` redirects all exa traffic, and only that
 traffic: authentication, handoff and cloud sessions go to `api.devin.ai` untouched, which is
-correct — none of it is model traffic.
+correct — none of it is model traffic. The variable's name is a leftover from the Windsurf
+acquisition, compiled into the `devin` binary itself; `DEVIN_API_URL`, which also exists, points
+at `api.devin.ai` and does not reach the inference server, so there is no Devin-named alias to
+use instead.
 
 Observed endpoints:
 
