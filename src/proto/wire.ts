@@ -80,7 +80,7 @@ export function field(fieldNo: number, wire: 0 | 2, payload: bigint | Uint8Array
 export const utf8 = (fieldNo: number, value: string): Uint8Array =>
   field(fieldNo, 2, new TextEncoder().encode(value));
 
-export function concat(...parts: Uint8Array[]): Uint8Array {
+export function concat(...parts: Uint8Array[]): Uint8Array<ArrayBuffer> {
   const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
   let off = 0;
   for (const part of parts) {
