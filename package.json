@@ -13,6 +13,7 @@
     "claude-code",
     "opencode",
     "gemini",
+    "devin",
     "openai",
     "anthropic"
   ],
@@ -34,7 +35,8 @@
     "jev-codex": "bin/jev-codex.mjs",
     "jev-claude": "bin/jev-claude.mjs",
     "jev-opencode": "bin/jev-opencode.mjs",
-    "jev-gemini": "bin/jev-gemini.mjs"
+    "jev-gemini": "bin/jev-gemini.mjs",
+    "jev-devin": "bin/jev-devin.mjs"
   },
   "files": [
     "dist",
@@ -53,6 +55,7 @@
     "claude": "node bin/jev-claude.mjs",
     "opencode": "node bin/jev-opencode.mjs",
     "gemini": "node bin/jev-gemini.mjs",
+    "devin": "node bin/jev-devin.mjs",
     "prepublishOnly": "pnpm typecheck && pnpm test && pnpm build"
   },
   "dependencies": {

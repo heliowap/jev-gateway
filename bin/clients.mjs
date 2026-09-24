@@ -258,6 +258,21 @@ export const opencode = {
     );
   },
 };
+export const devin = {
+  name: "jev-devin",
+  client: "devin",
+  portEnv: "JEV_DEVIN_PORT",
+  defaultPort: 8792,
+  upstream: () => process.env.JEV_DEVIN_UPSTREAM_BASE_URL ?? "https://server.codeium.com",
+  upstreamHelp: "JEV_DEVIN_UPSTREAM_BASE_URL   where Devin traffic goes (default https://server.codeium.com)",
+  // The variable's name is a leftover compiled into the devin binary itself; it is the only
+  // knob that redirects the exa protocol. DEVIN_API_URL points at api.devin.ai instead.
+  env: (origin) => ({ WINDSURF_API_SERVER_URL: origin }),
+  configHelp: (origin) =>
+    `# Keep the gateway running (jev-devin --start), then:\n` +
+    `#   WINDSURF_API_SERVER_URL=${origin} devin\n`,
+};
+
 export const gemini = {
   name: "jev-gemini",
   client: "gemini",

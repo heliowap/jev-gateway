@@ -21,11 +21,12 @@ interface LauncherSpec {
 const opencode = clients.opencode as LauncherSpec;
 const codex = clients.codex as LauncherSpec;
 const claude = clients.claude as LauncherSpec;
+const devin = clients.devin as LauncherSpec;
 
 const origin = "http://127.0.0.1:8791";
 const launcherBin = fileURLToPath(new URL("../bin/jev-opencode.mjs", import.meta.url));
 
-const managedEnv = ["OPENCODE_CONFIG_CONTENT", "JEV_OPENCODE_UPSTREAM_BASE_URL", "JEV_OPENCODE_MODEL", "JEV_CODEX_UPSTREAM_BASE_URL", "JEV_CLAUDE_UPSTREAM_BASE_URL", "CODEX_HOME"] as const;
+const managedEnv = ["OPENCODE_CONFIG_CONTENT", "JEV_OPENCODE_UPSTREAM_BASE_URL", "JEV_OPENCODE_MODEL", "JEV_CODEX_UPSTREAM_BASE_URL", "JEV_CLAUDE_UPSTREAM_BASE_URL", "JEV_DEVIN_UPSTREAM_BASE_URL", "CODEX_HOME"] as const;
 const savedEnv: Record<string, string | undefined> = {};
 
 beforeEach(() => {
@@ -151,6 +152,39 @@ describe("jev-opencode entrypoint", () => {
     const out = execFileSync(process.execPath, [launcherBin, "--print-config"], { encoding: "utf8", timeout: 30_000 });
     expect(out).toContain("http://127.0.0.1:8791/v1");
     expect(out).toContain("jev-gateway");
+  });
+});
+
+describe("jev-devin spec", () => {
+  it("identifies itself as the devin launcher on its own port", () => {
+    expect(devin.name).toBe("jev-devin");
+    expect(devin.client).toBe("devin");
+    expect(devin.portEnv).toBe("JEV_DEVIN_PORT");
+    expect(devin.defaultPort).toBe(8792);
+    expect([codex.defaultPort, claude.defaultPort, opencode.defaultPort]).not.toContain(devin.defaultPort);
+  });
+
+  it("defaults upstream to the exa backend with a JEV_DEVIN_UPSTREAM_BASE_URL override", () => {
+    expect(devin.upstream()).toBe("https://server.codeium.com");
+    process.env.JEV_DEVIN_UPSTREAM_BASE_URL = "https://exa.test";
+    expect(devin.upstream()).toBe("https://exa.test");
+    expect(devin.upstreamHelp).toContain("JEV_DEVIN_UPSTREAM_BASE_URL");
+  });
+
+  it("points the CLI at the gateway through the variable compiled into it", () => {
+    // The name is a leftover from the binary's windsurf backend; there is no DEVIN_* equivalent.
+    expect(devin.env!(origin)).toEqual({ WINDSURF_API_SERVER_URL: origin });
+    expect(devin.configHelp(origin)).toContain(`WINDSURF_API_SERVER_URL=${origin}`);
+    expect(devin.configHelp(origin)).toContain("jev-devin --start");
+  });
+});
+
+describe("jev-devin entrypoint", () => {
+  it("is registered in package.json with a runnable script", () => {
+    const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as any;
+    expect(pkg.bin["jev-devin"]).toBe("bin/jev-devin.mjs");
+    expect(pkg.scripts.devin).toBe("node bin/jev-devin.mjs");
+    expect(pkg.keywords).toContain("devin");
   });
 });
 
