@@ -59,6 +59,15 @@ describe("exaAdapter.toInput", () => {
     expect(input.turns[2]).toEqual({ role: "tool_result", tool: "exec", content: "file1 file2" });
   });
 
+  it("truncates thinking the same way it truncates message text", () => {
+    const assistant = field(3, 2, concat(utf8(1, randomUUID()), field(2, 0, 2n), utf8(11, "t".repeat(100))));
+    const input = exaAdapter.toInput(parse(request(assistant, toolDef("exec"))), 30);
+    if ("skip" in input) throw new Error(input.skip);
+    expect(input.turns[0]!.role).toBe("assistant");
+    expect((input.turns[0] as { text?: string }).text).toContain("[truncated]");
+    expect((input.turns[0] as { text?: string }).text!.length).toBeLessThan(40);
+  });
+
   it("skips messages with roles it does not know", () => {
     const unknown = field(3, 2, concat(utf8(1, randomUUID()), field(2, 0, 99n), utf8(3, "hidden")));
     const input = exaAdapter.toInput(parse(request(userMsg("hi"), unknown, toolDef("exec"))), 4000);

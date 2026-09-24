@@ -36,7 +36,7 @@ function parse(bytes: Uint8Array, encoding?: string): ExaRequest | undefined {
   try {
     const frames = peel(bytes);
     const payload = frames[0]?.payload;
-    // A compressed or empty first frame is not ours to judge: passthrough.
+    // A compressed frame is not ours to judge: passthrough.
     if (!payload || (frames[0]!.flags & 1) !== 0) return undefined;
     return { stream: true, frames, message: readFields(payload), raw: bytes };
   } catch {
@@ -83,7 +83,7 @@ function toInput(req: ExaRequest, maxMessageChars: number): RouterInput | { skip
         if (id && name) toolNameByCallId.set(id, name);
         return { tool: name || "unknown", arguments: truncate(text(first(cf, 3)), maxMessageChars) };
       });
-      const thinking = text(first(f, 11));
+      const thinking = truncate(text(first(f, 11)), maxMessageChars);
       turns.push({
         role: "assistant",
         ...(body || thinking ? { text: [thinking, body].filter(Boolean).join("\n") } : {}),

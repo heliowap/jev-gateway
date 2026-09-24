@@ -197,9 +197,17 @@ export function createApp({ config, askJev, fetch: fetchImpl = fetch, log: write
       }
     }
 
+    let rewrittenBody: string | Uint8Array | undefined;
     if (rewritten && decision.mode !== "passthrough") {
-      const body = adapter.encode ? adapter.encode(rewritten) : JSON.stringify(rewritten);
-      const response = await forward(c.req.raw, config, fetchImpl, { body, responseHeaders: decisionHeaders(decision) });
+      try {
+        rewrittenBody = adapter.encode ? adapter.encode(rewritten) : JSON.stringify(rewritten);
+      } catch (error) {
+        decision = giveUp(error);
+      }
+    }
+
+    if (rewrittenBody !== undefined && rewritten && decision.mode !== "passthrough") {
+      const response = await forward(c.req.raw, config, fetchImpl, { body: rewrittenBody, responseHeaders: decisionHeaders(decision) });
       const sent = { mode: decision.mode, model: rewritten.model, tool_choice: (rewritten as { tool_choice?: unknown }).tool_choice };
       dumpResponse("rejected", response, { sent });
       if (response.status !== 400 && response.status !== 422) {

@@ -44,6 +44,9 @@ export function readFields(buf: Uint8Array): WireField[] {
     const field = Number(tag >> 3n);
     const wire = Number(tag & 7n);
     if (field === 0) throw new Error("field 0 is not legal");
+    // Protobuf caps field numbers at 2^29-1; past that, Number() precision would let a tag
+    // re-encode differently than it arrived, which is worse than refusing to touch it.
+    if (field > 0x1fffffff) throw new Error(`field ${field} is out of range`);
     if (wire === 0) {
       const [varint, next] = readVarint(buf, off);
       off = next;

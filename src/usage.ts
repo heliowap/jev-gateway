@@ -77,7 +77,7 @@ async function readConnectUsage(response: Response): Promise<Usage | undefined> 
           const e = readFields(entry.bytes ?? new Uint8Array());
           const wrapper = e.find((f) => f.field === 4)?.bytes;
           const value = wrapper ? readFields(wrapper).find((f) => f.field === 2)?.bytes : undefined;
-          if (!value || value.length < 4) continue;
+          if (!value || value.length !== 4) continue;
           const v = new DataView(value.buffer, value.byteOffset, 4).getFloat32(0, true);
           const key = text(e.find((f) => f.field === 5));
           if (key === "input_tokens") found.input = v;
@@ -87,7 +87,7 @@ async function readConnectUsage(response: Response): Promise<Usage | undefined> 
       }
     }
   } catch {
-    // A stream that peels only partway reports what it read; unreadable bytes report nothing.
+    // A truncated body peels nothing: report nothing rather than guess.
   }
   if (found.input === undefined && found.output === undefined) return undefined;
   return { input: 0, output: 0, cached: 0, cacheWrite: 0, reasoning: 0, ...found };

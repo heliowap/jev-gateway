@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { exaAdapter } from "../src/adapters/exa.js";
 import { createApp } from "../src/app.js";
 import { argKey } from "../src/questions.js";
 import { frame, peel } from "../src/proto/connect.js";
@@ -71,6 +72,25 @@ describe("the exa route", () => {
     const frames = peel(new Uint8Array(await res.arrayBuffer()));
     expect(frames.at(-1)).toEqual({ flags: 2, payload: new TextEncoder().encode("{}") });
     expect(upstream.calls).toHaveLength(0);
+  });
+
+  it("fails open to passthrough when re-encoding the rewritten request throws", async () => {
+    const jev = fakeJev({ needs_tool: { noul: 0.9 }, tool: { choice: "exec", confidence: 0.9 } });
+    const upstream = rawUpstream(reply);
+    const encode = exaAdapter.encode!.bind(exaAdapter);
+    exaAdapter.encode = () => {
+      throw new Error("encode exploded");
+    };
+    try {
+      const body = exaRequest(userMsg("run echo hi"), toolDef("exec", '{"type":"object","properties":{"command":{"type":"string"}}}'));
+      const res = await post(app(jev.askJev, upstream.fetchImpl), PATH, body);
+      expect(res.status).toBe(200);
+      expect(res.headers.get("x-jev-gateway-mode")).toBe("passthrough");
+      expect(res.headers.get("x-jev-gateway-reason")).toContain("router_error: encode exploded");
+      expect(upstream.calls[0]?.body).toEqual(body);
+    } finally {
+      exaAdapter.encode = encode;
+    }
   });
 });
 
