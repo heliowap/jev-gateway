@@ -29,7 +29,7 @@ npm install -g jev-gateway
 ```bash
 jev-codex      # use it exactly like `codex`
 jev-claude     # use it exactly like `claude`
-jev-opencode   # use it exactly like `opencode` (stable v1)
+jev-opencode   # use it like `opencode` (v1 or v2)
 jev-gemini     # Gemini CLI, with a Gemini API key
 ```
 
@@ -191,8 +191,14 @@ free to ignore. Expect better tool picks on large tool lists, not lower cost or 
 
 ## Using it with OpenCode
 
-Tested with stable OpenCode v1.18.31. OpenCode v2 is out of scope: no `previous_response_id`
-chaining, namespaces, or `additional_tools` behavior is assumed.
+Tested with OpenCode v1.18.31 and v2.0.16. On v2, the launcher adds `--standalone` to interactive,
+`run`, `mini`, and `models` commands. This starts a private OpenCode server that reads the injected
+gateway config instead of reusing a background server with different settings. If you pass
+`--server` or `--standalone` yourself, the launcher leaves that choice alone.
+For Zen and Go models, v2 also needs a per-model gateway address: account settings can override
+the provider address after startup. The launcher reads model IDs from OpenCode's local catalogue
+and includes the configured or `-m` model when the catalogue is not yet present. It reads only
+model IDs; keys stay with OpenCode. `--print-config` includes these v2 model entries.
 
 **Quick path**
 
@@ -219,8 +225,9 @@ jev-opencode --dashboard      # open the monitoring dashboard in your browser
 ### Where OpenCode traffic goes
 
 The launcher reads your OpenCode config (global, `OPENCODE_CONFIG`, the project's
-`opencode.json`/`opencode.jsonc`, `OPENCODE_CONFIG_DIR`) and follows the provider of your default
-`model`. The first row that applies wins:
+`opencode.json`/`opencode.jsonc` or `.opencode` config, `OPENCODE_CONFIG_DIR`) and follows the
+provider of your default `model`, including the v2 `model` and `providers` fields. The first row
+that applies wins:
 
 | Your setup | The gateway forwards to | What the launched OpenCode gets |
 | --- | --- | --- |
@@ -250,8 +257,9 @@ address) falls through to the OpenAI rows, as before. Detection reads the config
 directory, so one gateway serves one upstream: moving to a project whose config leads elsewhere
 asks for `jev-opencode --stop` first.
 
-Unit-tested against config files. The launch with a real OpenCode moving `opencode`/`opencode-go`
-has not been run yet.
+Unit-tested against config files. OpenCode v2.0.16 was run with isolated config and a local mock
+upstream. A live Zen run with a tool request verified that both the model call and the title call
+reached the gateway. Only short connectivity prompts were sent to real providers.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |

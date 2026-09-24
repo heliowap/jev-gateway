@@ -25,6 +25,7 @@ const ENV_FILES = [...(FROM_SOURCE && !process.env.JEV_SKIP_PROJECT_ENV ? [join(
  * @param {() => string} spec.upstream        where this client's traffic is forwarded
  * @param {string} spec.upstreamHelp          help text describing the upstream default
  * @param {(origin: string) => string[]} [spec.args]   extra leading arguments for the client
+ * @param {(origin: string, argv: string[]) => string[]} [spec.tailArgs]  extra arguments after the client's own arguments
  * @param {(origin: string) => Record<string, string>} [spec.env]  extra environment for the client
  * @param {(origin: string) => string} spec.configHelp  how to wire the client up permanently
  */
@@ -252,7 +253,8 @@ Environment (or ${ENV_FILES.at(-1)}):
   }
 
   await ensureRouter();
-  const child = spawn(spec.client, [...(spec.args?.(origin) ?? []), ...process.argv.slice(2)], {
+  const clientArgs = process.argv.slice(2);
+  const child = spawn(spec.client, [...(spec.args?.(origin) ?? []), ...clientArgs, ...(spec.tailArgs?.(origin, clientArgs) ?? [])], {
     stdio: "inherit",
     env: { ...process.env, ...spec.env?.(origin) },
   });

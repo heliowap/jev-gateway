@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -17,6 +17,7 @@ interface LauncherSpec {
   upstream: () => string;
   upstreamHelp: string;
   args?: (origin: string) => string[];
+  tailArgs?: (origin: string, argv: string[]) => string[];
   env?: (origin: string) => Record<string, string>;
   configHelp: (origin: string) => string;
 }
@@ -36,10 +37,12 @@ const managedEnv = [
   "JEV_CLAUDE_UPSTREAM_BASE_URL",
   "CODEX_HOME",
   "XDG_CONFIG_HOME",
+  "XDG_CACHE_HOME",
   "OPENCODE_CONFIG",
   "OPENCODE_CONFIG_DIR",
   "OPENAI_API_KEY",
   "OPENCODE_API_KEY",
+  "PATH",
 ] as const;
 const savedEnv: Record<string, string | undefined> = {};
 let scratch: string;
@@ -52,6 +55,7 @@ beforeEach(() => {
   // The developer's own ~/.config/opencode must not decide what these tests see.
   scratch = mkdtempSync(join(tmpdir(), "jev-opencode-"));
   process.env.XDG_CONFIG_HOME = join(scratch, "config");
+  process.env.XDG_CACHE_HOME = join(scratch, "cache");
 });
 
 afterEach(() => {
@@ -135,11 +139,62 @@ describe("jev-opencode spec", () => {
     expect(env.OPENCODE_EXPERIMENTAL_CODE_MODE).toBe("false");
   });
 
-  it("adds no leading client args, so user flags (including -m) forward untouched", () => {
-    // launcher.mjs appends the raw argv after spec.args; with no injected --model, the injected
-    // config model above stays the default while a user `-m provider/model` keeps top priority.
+  it("starts OpenCode v2 in a private server so it reads the injected gateway config", () => {
+    const bin = join(scratch, "bin");
+    mkdirSync(bin);
+    const executable = join(bin, "opencode");
+    writeFileSync(executable, "#!/bin/sh\nprintf 'opencode v2.0.16\\n'\n");
+    chmodSync(executable, 0o755);
+    process.env.PATH = `${bin}:${savedEnv.PATH}`;
+    expect(opencode.tailArgs!(origin, ["run", "hi"])).toEqual(["--standalone"]);
+    expect(opencode.tailArgs!(origin, [])).toEqual(["--standalone"]);
+    expect(opencode.tailArgs!(origin, ["run", "hi", "--server", "http://127.0.0.1:4096"])).toEqual([]);
+    expect(opencode.tailArgs!(origin, ["auth", "list"])).toEqual([]);
+    writeFileSync(executable, "#!/bin/sh\nprintf '1.18.31\\n'\n");
+    expect(opencode.tailArgs!(origin, ["run", "hi"])).toEqual([]);
     expect(opencode.args).toBeUndefined();
     expect(typeof opencode.env).toBe("function");
+  });
+
+  it("pins v2 Zen model endpoints after OpenCode loads provider settings", () => {
+    const bin = join(scratch, "bin");
+    mkdirSync(bin);
+    const executable = join(bin, "opencode");
+    writeFileSync(executable, "#!/bin/sh\nprintf 'opencode v2.0.16\\n'\n");
+    chmodSync(executable, 0o755);
+    process.env.PATH = `${bin}:${savedEnv.PATH}`;
+    process.env.OPENCODE_API_KEY = "dummy-key";
+    const cache = join(scratch, "cache", "opencode");
+    mkdirSync(cache, { recursive: true });
+    writeFileSync(join(cache, "models.json"), JSON.stringify({
+      opencode: { models: { "claude-opus-5-5": {} } },
+      "opencode-go": { models: { "gpt-5": {} } },
+    }));
+
+    const config = inlineConfig();
+    expect(config.providers.opencode.models["claude-opus-5-5"].settings.baseURL).toBe(`${origin}/v1`);
+    expect(config.providers["opencode-go"].models["gpt-5"].settings.baseURL).toBe(`${origin}/v1`);
+    expect(config.provider.opencode.options.baseURL).toBe(`${origin}/v1`);
+    const help = opencode.configHelp(origin);
+    const printed = JSON.parse(help.slice(help.indexOf("{"), help.lastIndexOf("}") + 1));
+    expect(printed.providers.opencode.models["claude-opus-5-5"].settings.baseURL).toBe(`${origin}/v1`);
+  });
+
+  it("pins the selected Zen model before the v2 catalogue exists", () => {
+    const bin = join(scratch, "bin");
+    mkdirSync(bin);
+    const executable = join(bin, "opencode");
+    writeFileSync(executable, "#!/bin/sh\nprintf 'opencode v2.0.16\\n'\n");
+    chmodSync(executable, 0o755);
+    process.env.PATH = `${bin}:${savedEnv.PATH}`;
+    globalConfig({ model: "opencode/claude-opus-5-5" });
+    expect(inlineConfig().providers.opencode.models["claude-opus-5-5"].settings.baseURL).toBe(`${origin}/v1`);
+    process.argv.push("-m", "opencode/claude-fable-5");
+    try {
+      expect(inlineConfig().providers.opencode.models["claude-fable-5"].settings.baseURL).toBe(`${origin}/v1`);
+    } finally {
+      process.argv.splice(-2);
+    }
   });
 
   it("prints permanent wiring help rooted at the gateway", () => {
@@ -174,6 +229,28 @@ describe("jev-opencode spec", () => {
 });
 
 describe("jev-opencode follows the user's OpenCode config", () => {
+  it("follows a v2 model selection and native provider settings", () => {
+    globalConfig({ model: { providerID: "opencode", model: "gpt-5.1-codex" } });
+    expect(detectOpencode(process.env, scratch)).toEqual({ upstream: "https://opencode.ai/zen/v1", rebind: ["opencode", "opencode-go"] });
+
+    globalConfig({
+      model: { providerID: "cli_proxy", model: "custom-model" },
+      providers: { cli_proxy: { package: "aisdk:@ai-sdk/openai-compatible", settings: { baseURL: "http://127.0.0.1:8317/v1", apiKey: "sk-in-the-file" } } },
+    });
+    expect(detectOpencode(process.env, scratch)).toEqual({ upstream: "http://127.0.0.1:8317/v1", rebind: ["cli_proxy"] });
+    process.env.OPENCODE_CONFIG = join(scratch, "config", "opencode", "opencode.json");
+    expect(inlineConfig().provider).toEqual({ cli_proxy: { options: { baseURL: `${origin}/v1` } } });
+    expect(opencode.env!(origin).OPENCODE_CONFIG_CONTENT).not.toContain("sk-in-the-file");
+  });
+
+  it("reads v2 project config from .opencode", () => {
+    const dir = join(scratch, "project");
+    mkdirSync(join(dir, ".git"), { recursive: true });
+    mkdirSync(join(dir, ".opencode"));
+    writeFileSync(join(dir, ".opencode", "opencode.json"), JSON.stringify({ model: { providerID: "opencode", model: "gpt-5.1-codex" } }));
+    expect(detectOpencode(process.env, dir).upstream).toBe("https://opencode.ai/zen/v1");
+  });
+
   it("sends opencode/ and opencode-go/ models to Zen and moves only the baseURL of both providers", () => {
     for (const model of ["opencode/some-zen-model", "opencode-go/some-go-model"]) {
       globalConfig({ model });
