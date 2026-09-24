@@ -159,10 +159,13 @@ dashboard show which provider is in use.
 With no terminal to ask in (CI, scripts), a launcher does not wait for input: it exits and names
 the variables it looked for.
 
-The TypeSafe and OpenCode paths are run against the real APIs; OpenCode's unavailable-free-model
-behavior and paid opt-in are covered by tests only, since the free model still answers. The OpenRouter and Vercel paths
-follow those providers' published endpoints and are covered by tests, but have not been run with
-real keys yet. The first-run key check will tell you at once if one of them disagrees.
+The TypeSafe and OpenCode paths are run against the real APIs. On 2026-09-24, the setup key
+check succeeded with a real OpenCode Zen key for both `jev-1.13-free` and paid `jev-1.13`. This
+confirms that the paid model answered the check; the account's billing history was not inspected.
+The unavailable-free-model behavior and setup consent flow remain test-only because the free model
+still answers. The OpenRouter and Vercel paths follow those providers' published endpoints and are
+covered by tests, but have not been run with real keys yet. The first-run key check will tell you
+at once if one of them disagrees.
 
 ## Using it with Codex
 
