@@ -31,6 +31,7 @@ jev-codex      # use it exactly like `codex`
 jev-claude     # use it exactly like `claude`
 jev-opencode   # use it exactly like `opencode` (stable v1)
 jev-gemini     # Gemini CLI, with a Gemini API key
+jev-devin      # use it exactly like `devin`
 ```
 
 **3. Answer two questions, once**
@@ -74,7 +75,7 @@ before. Only sessions started with the `jev-` commands go through the gateway.
 
 ## Commands
 
-All of these work with `jev-codex`, `jev-claude`, `jev-opencode` and `jev-gemini`.
+All of these work with `jev-codex`, `jev-claude`, `jev-opencode`, `jev-gemini` and `jev-devin`.
 
 | Command | What it does |
 | --- | --- |
@@ -90,8 +91,9 @@ All of these work with `jev-codex`, `jev-claude`, `jev-opencode` and `jev-gemini
 | `jev-codex --print-config` | Print settings to point plain `codex` at the gateway permanently |
 | `jev-codex --gateway-help` | List all of the above |
 
-Codex uses port 8790, Claude Code 8789, OpenCode 8791 and Gemini clients 8788. Change them with
-`JEV_CODEX_PORT`, `JEV_CLAUDE_PORT`, `JEV_OPENCODE_PORT` and `JEV_GEMINI_PORT`.
+Codex uses port 8790, Claude Code 8789, OpenCode 8791, Gemini clients 8788 and Devin 8792. Change
+them with `JEV_CODEX_PORT`, `JEV_CLAUDE_PORT`, `JEV_OPENCODE_PORT`, `JEV_GEMINI_PORT` and
+`JEV_DEVIN_PORT`.
 
 ## Dashboard
 
@@ -369,6 +371,29 @@ This covers clients that use a **Gemini API key**. A Gemini CLI signed in with a
 talks to a different Google service and does not go through the gateway. The Gemini path has unit
 tests but has not yet been run against the real API.
 
+## Using it with Devin
+
+`jev-devin` runs the Devin CLI with `WINDSURF_API_SERVER_URL` pointed at a gateway on port 8792,
+which forwards to `https://server.codeium.com` (override with `JEV_DEVIN_UPSTREAM_BASE_URL`). The
+variable's name is a leftover compiled into the `devin` binary — its inference backend is called
+"windsurf" — and it is the only knob that redirects this traffic. `DEVIN_API_URL` points at a
+different service (`api.devin.ai`, for auth and handoff) and is left alone.
+
+Devin does not speak JSON REST. Its requests are Connect RPC envelopes carrying protobuf bodies,
+so the gateway decodes `POST /exa.api_server_pb.ApiServerService/GetChatMessage` without a schema,
+reads the messages and tools out of the wire fields, and re-encodes whatever it changed. There is
+no `tool_choice` on this wire, so steering is always `hint` — a suggestion appended as one more
+message — while `direct` synthesizes the Connect stream an upstream answer would have had. Every
+other `exa.*` endpoint (seat management, model configuration, analytics) and every other path is
+proxied opaque. Token usage is read back out of the stream's stats fields, so the dashboard meters
+Devin traffic like any other client's.
+
+Verified end to end on Devin CLI 3000.11.3: a `hint` rewrite was accepted upstream, a `direct`
+answer was executed by the CLI, and the following turn — whose history carries the unsealed
+synthetic call — was accepted, so the server does not enforce the `sealed` field on history.
+`devin -p` and the interactive TUI share the same backend, so both go through the gateway. Other
+versions were not tested; anything the decoder cannot read fails open to passthrough.
+
 ## Running it as a server for your own app
 
 Work from a checkout:
@@ -386,7 +411,7 @@ from openai import OpenAI
 client = OpenAI(base_url="http://localhost:8787/v1")  # your usual provider key still works
 ```
 
-The gateway routes four endpoints and proxies every other `/v1/*` or `/v1beta/*` path unchanged:
+The gateway routes these endpoints and proxies every other path unchanged:
 
 | Endpoint | API |
 | --- | --- |
@@ -394,6 +419,7 @@ The gateway routes four endpoints and proxies every other `/v1/*` or `/v1beta/*`
 | `POST /v1/responses` | OpenAI Responses |
 | `POST /v1/messages` | Anthropic Messages |
 | `POST /v1beta/models/*` | Google Gemini API (`generateContent`, `streamGenerateContent`) |
+| `POST /exa.api_server_pb.ApiServerService/GetChatMessage` | Devin CLI (Connect/protobuf) |
 
 By default your client's own `Authorization` header is forwarded to the provider. Set
 `UPSTREAM_API_KEY` to have the gateway hold the provider key instead, and `ROUTER_API_KEY` to
