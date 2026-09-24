@@ -16,7 +16,9 @@ export interface ExaRequest {
   stream?: boolean; // always true: Connect server-streaming
   frames: Frame[]; // the request envelope(s); frame 0 carries the proto message
   message: WireField[]; // decoded fields of frame 0's payload
-  raw: Uint8Array; // original bytes, forwarded untouched on passthrough
+  /** Debug dumps JSON.stringify the request; field 1 carries the session token, so it must
+   *  never reach disk — dumps get a structural summary instead. */
+  toJSON(): unknown;
 }
 
 const fieldsOf = (bytes: Uint8Array | undefined): WireField[] => {
@@ -38,7 +40,13 @@ function parse(bytes: Uint8Array, encoding?: string): ExaRequest | undefined {
     const payload = frames[0]?.payload;
     // A compressed frame is not ours to judge: passthrough.
     if (!payload || (frames[0]!.flags & 1) !== 0) return undefined;
-    return { stream: true, frames, message: readFields(payload), raw: bytes };
+    const message = readFields(payload);
+    return {
+      stream: true,
+      frames,
+      message,
+      toJSON: () => ({ stream: true, frames: frames.length, fields: message.map((f) => `${f.field}/w${f.wire}`) }),
+    };
   } catch {
     return undefined;
   }

@@ -74,6 +74,37 @@ describe("the exa route", () => {
     expect(upstream.calls).toHaveLength(0);
   });
 
+  it("dumps a structural summary, never the decoded session token", async () => {
+    const dumps: Record<string, unknown>[] = [];
+    const upstream = rawUpstream(reply);
+    const target = createApp({
+      config: testConfig({ upstreamBaseUrl: "https://server.codeium.com" }),
+      askJev: fakeJev({}).askJev,
+      fetch: upstream.fetchImpl,
+      dump: (_kind, data) => dumps.push(data),
+    });
+    // Field 1 is client metadata; field 1.3 is the devin-session-token JWT.
+    const meta = field(1, 2, concat(utf8(1, "devin-cli"), utf8(3, "devin-session-token$SECRETJWT")));
+    await post(target, PATH, exaRequest(meta, userMsg("hi")));
+    const dumped = JSON.stringify(dumps[0]?.body);
+    // The token travels as raw bytes; a byte map on disk is still the token.
+    expect(dumped).not.toContain("SECRETJWT");
+    expect(dumped).not.toContain('"bytes"');
+    expect(dumped).not.toContain('"raw"');
+    expect(dumped).toContain('"fields"');
+  });
+
+  it("labels a body it cannot read because of content-encoding", async () => {
+    const upstream = rawUpstream(reply);
+    const res = await app(fakeJev({}).askJev, upstream.fetchImpl).request(PATH, {
+      method: "POST",
+      headers: { "content-type": "application/connect+proto", "content-encoding": "gzip" },
+      body: exaRequest(userMsg("hi")),
+    });
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-jev-gateway-reason")).toBe("unsupported_encoding");
+  });
+
   it("fails open to passthrough when re-encoding the rewritten request throws", async () => {
     const jev = fakeJev({ needs_tool: { noul: 0.9 }, tool: { choice: "exec", confidence: 0.9 } });
     const upstream = rawUpstream(reply);
@@ -108,6 +139,21 @@ describe("the catch-all forward", () => {
     const misc = await target.request("/favicon.ico");
     expect(misc.status).toBe(200);
     expect(upstream.calls[1]?.url).toBe("https://server.codeium.com/favicon.ico");
+  });
+
+  it("never forwards dashboard misses — and their ?key= — upstream", async () => {
+    const upstream = rawUpstream(reply);
+    const target = createApp({
+      config: testConfig({ upstreamBaseUrl: "https://server.codeium.com", routerApiKey: "router-secret" }),
+      askJev: fakeJev({}).askJev,
+      fetch: upstream.fetchImpl,
+    });
+    const res = await target.request("/dashboard/nope?key=router-secret");
+    expect(res.status).toBe(404);
+    expect(upstream.calls).toHaveLength(0);
+    // The real dashboard still answers when the key is right.
+    expect((await target.request("/dashboard/events?key=router-secret")).status).toBe(200);
+    expect(upstream.calls).toHaveLength(0);
   });
 
   it("still answers /health locally", async () => {
