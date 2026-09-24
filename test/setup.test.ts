@@ -76,6 +76,33 @@ describe("runSetup", () => {
     const values = await runSetup({ name: "x", providers, envFile, io: script(["1", "key", "y"]).io, validate: offline, save: () => {} });
     expect(values).toEqual({ JEV_PROVIDER: "typesafe", TYPESAFE_API_KEY: "key" });
   });
+
+  it("asks before a paid key check and keeps the free model if declined", async () => {
+    const yes = script(["4", "key", "y"]);
+    const checked: string[] = [];
+    const validate = async (provider: { model: string }) => {
+      checked.push(provider.model);
+      yes.printed.push(`checked ${provider.model}`);
+      return provider.model === "jev-1.13-free"
+        ? { ok: false, freeUnavailable: true, refused: false, reason: "404 free model unavailable" }
+        : { ok: true, ms: 9 };
+    };
+    expect(await runSetup({ name: "x", providers, envFile, io: yes.io, validate, save: () => {} })).toEqual({
+      JEV_PROVIDER: "opencode", OPENCODE_API_KEY: "key", JEV_MODEL: "jev-1.13",
+    });
+    expect(checked).toEqual(["jev-1.13-free", "jev-1.13"]);
+    expect(yes.printed.findIndex((line) => line.includes("key check may be billed"))).toBeLessThan(yes.printed.indexOf("checked jev-1.13"));
+
+    const no = script(["4", "key", "n", "y"]);
+    const freeOnly = async (provider: { model: string }) => {
+      expect(provider.model).toBe("jev-1.13-free");
+      return { ok: false, freeUnavailable: true, refused: false, reason: "404 free model unavailable" };
+    };
+    expect(await runSetup({ name: "x", providers, envFile, io: no.io, validate: freeOnly, save: () => {} })).toEqual({
+      JEV_PROVIDER: "opencode", OPENCODE_API_KEY: "key", JEV_MODEL: "jev-1.13-free",
+    });
+    expect(no.printed.join("\n")).toContain("pass requests to the LLM");
+  });
 });
 
 describe("validateKey", () => {
@@ -94,14 +121,16 @@ describe("validateKey", () => {
     expect(await validateKey(providers.openrouter, "k", down)).toMatchObject({ ok: false, refused: false, reason: "fetch failed" });
   });
 
-  it("accepts a key when the provider's fallback model answers even though the default does not", async () => {
+  it("reports a missing free model without calling the paid one", async () => {
     const seen: string[] = [];
     const fetchImpl = (async (_url: string, init: RequestInit) => {
       const body = JSON.parse(String(init.body));
       seen.push(body.model);
       return body.model === "jev-1.13-free" ? new Response("model not found", { status: 404 }) : Response.json({ answers: {} });
     }) as unknown as typeof fetch;
-    expect(await validateKey(providers.opencode, "k", fetchImpl)).toMatchObject({ ok: true });
+    expect(await validateKey(providers.opencode, "k", fetchImpl)).toMatchObject({ ok: false, freeUnavailable: true });
+    expect(seen).toEqual(["jev-1.13-free"]);
+    expect(await validateKey({ ...providers.opencode, model: "jev-1.13", paidModel: undefined }, "k", fetchImpl)).toMatchObject({ ok: true });
     expect(seen).toEqual(["jev-1.13-free", "jev-1.13"]);
 
     const refused = (async (_url: string, init: RequestInit) => {
@@ -111,6 +140,16 @@ describe("validateKey", () => {
     }) as unknown as typeof fetch;
     expect(await validateKey(providers.opencode, "k", refused)).toMatchObject({ ok: false, refused: true });
     expect(seen).toEqual(["jev-1.13-free"]);
+
+    for (const status of [429, 500, 503]) {
+      const unavailable = (async (_url: string, init: RequestInit) => {
+        seen.push(JSON.parse(String(init.body)).model);
+        return new Response("unavailable", { status });
+      }) as unknown as typeof fetch;
+      seen.length = 0;
+      expect(await validateKey(providers.opencode, "k", unavailable)).toMatchObject({ ok: false });
+      expect(seen).toEqual(["jev-1.13-free"]);
+    }
   });
 });
 

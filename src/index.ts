@@ -8,12 +8,7 @@ import { createEventLog } from "./events.js";
 const config = loadConfig();
 const log = (entry: Record<string, unknown>) => console.log(JSON.stringify({ time: new Date().toISOString(), ...entry }));
 
-// The switch changes what the user pays for, so it is logged, and the dashboard names the model
-// that answers from then on rather than the one the gateway started with.
-const askJev = createAskJev(config, fetch, (model, reason) => {
-  log({ event: "jev_fallback", from: config.jevModel, to: model, reason });
-  config.jevModel = model;
-});
+const askJev = createAskJev(config);
 
 const app = createApp({
   config,
@@ -24,7 +19,6 @@ const app = createApp({
 });
 
 serve({ fetch: app.fetch, hostname: config.host, port: config.port }, ({ port }) => {
-  const fallback = config.jevFallbackModel ? ` → fallback ${config.jevFallbackModel}` : "";
-  console.log(`jev-gateway listening on http://localhost:${port} → ${config.upstreamBaseUrl} (jev: ${config.jevModel}${fallback} via ${config.jevProvider})`);
+  console.log(`jev-gateway listening on http://localhost:${port} → ${config.upstreamBaseUrl} (jev: ${config.jevModel} via ${config.jevProvider})`);
   console.log(`dashboard: http://localhost:${port}/dashboard`);
 });

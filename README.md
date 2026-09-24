@@ -44,7 +44,7 @@ Where do you want to reach Jev?
   1) TypeSafe: the official API, direct from the makers of Jev
   2) OpenRouter: Jev through your OpenRouter account and credits
   3) Vercel AI Gateway: Jev through your Vercel AI Gateway key and billing
-  4) OpenCode: Jev through your OpenCode Zen key: free model, paid as automatic fallback
+  4) OpenCode: Jev through your OpenCode Zen key: free by default, paid only if selected
 Choose 1-4 [1]:
 Paste your TypeSafe API key (input is hidden):
 The key works (Jev answered in 712 ms).
@@ -141,16 +141,13 @@ and return the same answers, so the choice is about whose account and billing yo
 | TypeSafe (official) | `TYPESAFE_API_KEY` | `jev-latest` | [typesafe.ai](https://typesafe.ai) |
 | OpenRouter | `OPENROUTER_API_KEY` | `typesafe/jev-1.13` | [openrouter.ai/settings/keys](https://openrouter.ai/settings/keys) |
 | Vercel AI Gateway | `AI_GATEWAY_API_KEY` | `typesafe-ai/jev` | [Vercel dashboard](https://vercel.com/dashboard/ai-gateway/api-keys) |
-| OpenCode | `OPENCODE_API_KEY` | `jev-1.13-free` | [OpenCode Zen](https://dev.opencode.ai/auth) |
+| OpenCode | `OPENCODE_API_KEY` | `jev-1.13-free` | [OpenCode Zen](https://opencode.ai/auth) |
 
 OpenCode serves two ids at the same endpoint: `jev-1.13-free` (free,
 [for a limited time](https://opencode.ai/docs/zen/#jev)) and the paid `jev-1.13`. The gateway
-defaults to the free one. Once OpenCode answers that it is gone (404 or 410), the gateway switches
-to the paid one in the same turn and stays on it until it restarts, so no error reaches the agent.
-The switch is logged as a `jev_fallback` line (`--logs` shows it), and the dashboard names the
-paid model from then on. A timeout, a rate limit or a server error does not switch: those requests
-go to the LLM untouched, as with any other provider. Setting `JEV_MODEL=jev-1.13` names the paid
-model as the primary and removes the fallback.
+defaults to the free one. If OpenCode says the free model is gone (404 or 410), the request goes
+to the LLM unchanged. The reason names `JEV_MODEL=jev-1.13`, which opts into the paid model.
+The setup wizard offers to save that setting if only the paid model answers its key check.
 
 `jev-codex --setup` (or any other launcher) switches between them and restarts the gateway with the
 new key. To configure it by hand instead, put `JEV_PROVIDER` and the matching key in
@@ -159,11 +156,11 @@ it finds, TypeSafe's first. `JEV_MODEL` picks another model; an id written for o
 ignored under another, because the providers name their models differently. `--status` and the
 dashboard show which provider is in use.
 
-With no terminal to ask in (CI, scripts), a launcher does not wait for input: it exits and names the
-variables it looked for.
+With no terminal to ask in (CI, scripts), a launcher does not wait for input: it exits and names
+the variables it looked for.
 
-The TypeSafe and OpenCode paths are run against the real APIs; OpenCode's switch to the paid
-model is covered by tests only, since the free model still answers. The OpenRouter and Vercel paths
+The TypeSafe and OpenCode paths are run against the real APIs; OpenCode's unavailable-free-model
+behavior and paid opt-in are covered by tests only, since the free model still answers. The OpenRouter and Vercel paths
 follow those providers' published endpoints and are covered by tests, but have not been run with
 real keys yet. The first-run key check will tell you at once if one of them disagrees.
 

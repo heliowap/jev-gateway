@@ -18,8 +18,6 @@ export interface Config {
   /** Endpoint the questions are posted to; the provider's own unless overridden (tests, proxies). */
   jevUrl: string;
   jevModel: string;
-  /** A second model of the same provider, used once it says `jevModel` is gone (opencode: free, then paid). */
-  jevFallbackModel?: string;
   jevTimeoutMs: number;
   /** Below this, Jev's tool decision is ignored and the LLM decides. */
   minConfidence: number;
@@ -63,7 +61,6 @@ const bool = (env: Env, key: string, fallback: boolean): boolean => {
 export function loadConfig(env: Env = process.env): Config {
   const jevProvider = resolveProvider(env);
   const jevModel = resolveModel(jevProvider, str(env, "JEV_MODEL"));
-  const fallbackModel = PROVIDERS[jevProvider].fallbackModel;
   const onNone = str(env, "JEV_ON_NONE") ?? "force_none";
   if (onNone !== "force_none" && onNone !== "passthrough") {
     throw new Error(`JEV_ON_NONE must be "force_none" or "passthrough", got "${onNone}"`);
@@ -79,7 +76,6 @@ export function loadConfig(env: Env = process.env): Config {
     jevApiKey: str(env, PROVIDERS[jevProvider].keyEnv),
     jevUrl: resolveUrl(jevProvider, env),
     jevModel,
-    jevFallbackModel: fallbackModel && fallbackModel !== jevModel ? fallbackModel : undefined,
     jevTimeoutMs: num(env, "JEV_TIMEOUT_MS", 4000),
     minConfidence: num(env, "JEV_MIN_CONFIDENCE", 0.7),
     argMinCertainty: num(env, "JEV_ARG_MIN_CERTAINTY", 0.8),

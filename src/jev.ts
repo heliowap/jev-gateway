@@ -11,8 +11,9 @@ interface Provider {
   keyUrl: string;
   url: string;
   model: string;
-  /** A model for the same endpoint to switch to once `model` stops answering; absent for most providers. */
-  fallbackModel?: string;
+  models: string[];
+  /** A paid model setup can offer only with the user's consent. */
+  paidModel?: string;
 }
 
 /**
@@ -39,13 +40,11 @@ export function resolveProvider(env: Env): ProviderId {
 }
 
 /**
- * Model ids live in different namespaces: TypeSafe's and OpenCode's have no slash (`jev-latest`,
- * `jev-1.13-free`), the reselling gateways' do (`typesafe/jev-1.13`). A JEV_MODEL written for one
- * provider is ignored under another, so switching provider never sends an id the new one cannot know.
+ * A JEV_MODEL written for one provider is ignored under another. TypeSafe and OpenCode both use
+ * slashless ids, so the provider's accepted list decides rather than the presence of a slash.
  */
 export function resolveModel(provider: ProviderId, requested: string | undefined): string {
-  const fits = requested && requested.includes("/") === providers[provider].model.includes("/");
-  return fits ? requested : providers[provider].model;
+  return requested && providers[provider].models.includes(requested) ? requested : providers[provider].model;
 }
 
 /**
@@ -60,11 +59,6 @@ export function resolveUrl(provider: ProviderId, env: Env): string {
 }
 
 const RETRYABLE = new Set([408, 429, 500, 502, 503, 504, 529]);
-/**
- * What says the model itself is gone, such as a free tier that ended. A timeout, a rate limit or a
- * server error says nothing about the model, and the switch lasts until the gateway restarts, so
- * those fail open as they always did.
- */
 const MODEL_GONE = new Set([404, 410]);
 
 /** Some gateways return choice answers without a confidence; the winning probability stands in. */
@@ -80,23 +74,16 @@ function normalize(result: SystemOneResult<Questions>): SystemOneResult<Question
   return { model: result.model, answers, usage: { input_tokens: result.usage?.input_tokens ?? 0, output_tokens: result.usage?.output_tokens ?? 0 } } as SystemOneResult<Questions>;
 }
 
-/**
- * The one call the gateway makes to Jev, for whichever provider is configured. `onFallback` hears
- * about the switch to the fallback model, which changes what the user pays for.
- */
+/** The one call the gateway makes to Jev, for whichever provider is configured. */
 export function createAskJev(
-  config: Pick<Config, "jevProvider" | "jevApiKey" | "jevUrl" | "jevFallbackModel" | "jevTimeoutMs">,
+  config: Pick<Config, "jevProvider" | "jevApiKey" | "jevUrl" | "jevTimeoutMs">,
   fetchImpl: typeof fetch = fetch,
-  onFallback: (model: string, reason: string) => void = () => {},
 ): AskJev {
   const provider = providers[config.jevProvider];
   if (!config.jevApiKey) {
     throw new Error(`No API key for Jev: set ${provider.keyEnv} (${provider.label}), or run jev-codex --setup.`);
   }
-  const fallback = config.jevFallbackModel;
-  /** Set once the fallback has answered: the primary is not tried again until the gateway restarts. */
-  let switched = false;
-  const once = async (request: SystemOneRequest<Questions>, model?: string) => {
+  const once = async (request: SystemOneRequest<Questions>) => {
     const response = await fetchImpl(config.jevUrl, {
       method: "POST",
       headers: {
@@ -106,38 +93,28 @@ export function createAskJev(
         "http-referer": "https://github.com/vinilana/jev-gateway",
         "x-title": "jev-gateway",
       },
-      body: JSON.stringify(model === undefined ? request : { ...request, model }),
+      body: JSON.stringify(request),
       signal: AbortSignal.timeout(config.jevTimeoutMs),
     });
     if (!response.ok) {
       const detail = (await response.text().catch(() => "")).slice(0, 200);
-      throw Object.assign(new Error(`${response.status} from ${provider.label}: ${detail}`), { status: response.status });
+      const paidHint = config.jevProvider === "opencode" && request.model === provider.model && MODEL_GONE.has(response.status)
+        ? `free model unavailable; set JEV_MODEL=${provider.paidModel} for paid Jev. `
+        : "";
+      throw Object.assign(new Error(`${response.status} from ${provider.label}: ${paidHint}${detail}`), { status: response.status });
     }
     return normalize((await response.json()) as SystemOneResult<Questions>);
   };
   // One fast retry only: past that, failing open to the LLM is quicker.
-  const attempt = async (request: SystemOneRequest<Questions>, model?: string) => {
+  const attempt = async (request: SystemOneRequest<Questions>) => {
     try {
-      return await once(request, model);
+      return await once(request);
     } catch (error) {
       const status = (error as { status?: number }).status;
       if (status !== undefined && !RETRYABLE.has(status)) throw error;
       await new Promise((done) => setTimeout(done, 100));
-      return once(request, model);
+      return once(request);
     }
   };
-  return async (request) => {
-    if (switched && fallback) return attempt(request, fallback);
-    try {
-      return await attempt(request);
-    } catch (error) {
-      const status = (error as { status?: number }).status;
-      // The fallback is one plain call: the next request goes straight to it.
-      if (!fallback || status === undefined || !MODEL_GONE.has(status)) throw error;
-      const result = await once(request, fallback);
-      switched = true;
-      onFallback(fallback, error instanceof Error ? error.message : String(error));
-      return result;
-    }
-  };
+  return attempt;
 }

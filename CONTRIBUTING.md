@@ -78,7 +78,7 @@ src/adapters/         one file per wire format: chat.ts, responses.ts (Codex),
 src/state.ts          turns a conversation into Jev state
 src/questions.ts      turns tools into Jev questions and finds closed-set arguments
 src/decide.ts         the mode decision
-src/jev.ts            the call to Jev, for TypeSafe, OpenRouter or Vercel
+src/jev.ts            the call to Jev, for TypeSafe, OpenRouter, Vercel or OpenCode
 src/providers.json    the provider table, shared by jev.ts and the launchers' setup
 src/upstream.ts       streaming reverse proxy
 src/usage.ts          token usage read from a reply, normalised across providers
