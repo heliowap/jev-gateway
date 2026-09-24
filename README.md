@@ -502,7 +502,7 @@ a real coding agent does the same task with routing on and off, the gateway mete
 and a hidden verifier scores the result. The tasks are about building, debugging and extending a
 chess rules engine.
 
-Results so far, from 120 agent sessions: six models, two chess tasks, five runs per mode, agents
+The original series has 120 agent sessions: six models, two chess tasks, five runs per mode, agents
 run clean with no MCP servers or plugins. Medians with routing on, compared with the same model
 without it:
 
@@ -515,11 +515,18 @@ without it:
 | Opus 5 (Claude Code) | -7% / -22% / +2% | +22% / +61% / +83% |
 | Sonnet 5 (Claude Code) | -41% / -48% / -25% | +9% / +16% / +37% |
 
-Routing pays off when debugging, for every model. On the feature task it helped some models and
-made Opus 5 and Sonnet 5 clearly worse, and GPT-5.6 Luna got cheaper but less often right (3 of 5
-runs solved, against 5 of 5 without routing). Measure on your own work before trusting it: five
-runs per cell is a small sample. The chart, the spread of the individual runs, the raw data, how
-one run was caught copying from another, and how to run it yourself are in that repository.
+In that series routing cut output tokens on the bugfix task for every model. On the feature task
+it helped some models but raised Opus 5's output tokens by 22% and time by 83%. GPT-5.6 Luna got
+cheaper but less often right (3 of 5 runs solved, against 5 of 5 without routing).
+
+A [separate 20-run OpenCode series](https://github.com/vinilana/jev-gateway-bench/tree/main/results/2026-09-23-opencode-opus-5-cliproxy-comparison)
+used Opus 5 on the same tasks. With routing on, OpenCode cut median output tokens by 62% and time
+by 79% on bugfix; on the feature task, output tokens fell by 29% and time by 31%. All 20 runs
+passed every hidden check. The OpenCode run used forced tools through Chat Completions and a local
+CLI Proxy API, while Claude Code used hints through Anthropic Messages and a claude.ai
+subscription. Gateway version, Jev provider, tool roster and run date differed too. The comparison
+does not isolate the harness as the cause. Five runs per cell is a small sample. The raw data,
+per-run checks, audit and instructions for running the benchmark are in that repository.
 
 ## Development
 
