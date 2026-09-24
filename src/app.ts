@@ -4,6 +4,7 @@ import { Hono, type Context } from "hono";
 import type { Adapter } from "./adapters/adapter.js";
 import { chatAdapter } from "./adapters/chat.js";
 import { geminiAdapter } from "./adapters/gemini.js";
+import { exaAdapter } from "./adapters/exa.js";
 import { messagesAdapter } from "./adapters/messages.js";
 import { responsesAdapter } from "./adapters/responses.js";
 import type { Config } from "./config.js";
@@ -145,7 +146,8 @@ export function createApp({ config, askJev, fetch: fetchImpl = fetch, log: write
     const time = new Date().toISOString();
     const bytes = new Uint8Array(await c.req.arrayBuffer());
     // Unreadable bodies are not ours to judge: upstream produces its own error for them.
-    const req = parseBody<Req>(bytes, c.req.header("content-encoding"));
+    const encoding = c.req.header("content-encoding");
+    const req = adapter.parse ? adapter.parse(bytes, encoding) : parseBody<Req>(bytes, encoding);
     dump?.("request", {
       method: c.req.method,
       path: c.req.path,
@@ -196,7 +198,7 @@ export function createApp({ config, askJev, fetch: fetchImpl = fetch, log: write
     }
 
     if (rewritten && decision.mode !== "passthrough") {
-      const body = JSON.stringify(rewritten);
+      const body = adapter.encode ? adapter.encode(rewritten) : JSON.stringify(rewritten);
       const response = await forward(c.req.raw, config, fetchImpl, { body, responseHeaders: decisionHeaders(decision) });
       const sent = { mode: decision.mode, model: rewritten.model, tool_choice: (rewritten as { tool_choice?: unknown }).tool_choice };
       dumpResponse("rejected", response, { sent });
@@ -267,6 +269,7 @@ export function createApp({ config, askJev, fetch: fetchImpl = fetch, log: write
   app.post("/v1/responses", route(responsesAdapter));
   app.post("/v1/messages", route(messagesAdapter));
   app.post("/v1beta/models/*", route(geminiAdapter));
+  app.post("/exa.api_server_pb.ApiServerService/GetChatMessage", route(exaAdapter));
 
   // Everything else (models, embeddings, …) is proxied untouched.
   app.all("/v1/*", async (c) => {
@@ -275,6 +278,14 @@ export function createApp({ config, askJev, fetch: fetchImpl = fetch, log: write
     return response;
   });
   app.all("/v1beta/*", async (c) => {
+    const response = await forward(c.req.raw, config, fetchImpl);
+    dump?.("other", { method: c.req.method, path: c.req.path, headers: redactHeaders(c.req.raw.headers), status: response.status });
+    return response;
+  });
+
+  // Every other endpoint — the rest of exa (seat management, model catalogue, analytics) and
+  // anything an unrecognized client asks for — is proxied opaque.
+  app.all("/*", async (c) => {
     const response = await forward(c.req.raw, config, fetchImpl);
     dump?.("other", { method: c.req.method, path: c.req.path, headers: redactHeaders(c.req.raw.headers), status: response.status });
     return response;

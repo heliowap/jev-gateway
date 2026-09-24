@@ -22,7 +22,7 @@ export function peel(buf: Uint8Array): Frame[] {
   return frames;
 }
 
-export function frame(payload: Uint8Array, flags = 0): Uint8Array {
+export function frame(payload: Uint8Array, flags = 0): Uint8Array<ArrayBuffer> {
   const header = new Uint8Array(5);
   header[0] = flags;
   new DataView(header.buffer).setUint32(1, payload.length);

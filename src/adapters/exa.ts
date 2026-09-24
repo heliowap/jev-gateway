@@ -30,7 +30,9 @@ const byField = (fields: WireField[], no: number) => fields.filter((f) => f.fiel
 const first = (fields: WireField[], no: number) => fields.find((f) => f.field === no);
 const varint = (f: WireField | undefined) => (f?.varint === undefined ? undefined : Number(f.varint));
 
-function parse(bytes: Uint8Array): ExaRequest | undefined {
+function parse(bytes: Uint8Array, encoding?: string): ExaRequest | undefined {
+  // A compressed body we can't read is not ours to rewrite: passthrough keeps it intact.
+  if (encoding) return undefined;
   try {
     const frames = peel(bytes);
     const payload = frames[0]?.payload;
