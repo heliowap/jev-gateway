@@ -40,9 +40,8 @@ import { fakeJev, fakeUpstream, settled, testConfig } from "./helpers.js";
  *   `type: "function"` definitions identical on the wire to native tools. The
  *   `mcp__home__set_light` fixture below uses that same shape; its closed
  *   enum+boolean schema is what makes a `direct` answer valid.
- * - v2 is out of scope: no `previous_response_id` chaining, no namespaces, no
- *   `additional_tools` was observed on stable v1, so tests assert their absence
- *   rather than assuming v2 behavior.
+ * - The v1 fixtures below do not model v2 Responses chaining, namespaces, or
+ *   `additional_tools`. The v2 Chat Completions shape is covered separately.
  */
 
 // --- Captured native shapes (descriptions trimmed, parameters preserved) ---
@@ -213,6 +212,28 @@ function responsesSetup(
 }
 
 describe("opencode chat completions (stable @ai-sdk/openai-compatible)", () => {
+  it("routes v2 requests that omit tool_choice and send store", async () => {
+    // OpenCode v2.0.16 sends Chat Completions with no tool_choice and adds store.
+    const body = {
+      model: "gpt-5",
+      messages: [{ role: "user", content: "list files in src" }],
+      tools: [
+        { ...bashChatTool, function: { ...bashChatTool.function, name: "shell" } },
+        readChatTool,
+      ],
+      stream: true,
+      stream_options: { include_usage: true },
+      store: false,
+    };
+    const { post, jev, upstream } = chatSetup({ tool: { choice: "shell" }, needs_tool: { noul: 0.9 } });
+    const res = await post(body);
+
+    expect(res.headers.get("x-jev-gateway-mode")).toBe("forced");
+    expect(jev.requests).toHaveLength(1);
+    expect(upstream.calls[0]!.body.tool_choice).toEqual({ type: "function", function: { name: "shell" } });
+    expect(upstream.calls[0]!.body.store).toBe(false);
+  });
+
   it("offers native function tools to Jev with a readable transcript", async () => {
     const { post, jev } = chatSetup({ tool: { choice: "bash" }, needs_tool: { noul: 0.9 } });
     await post(opencodeChatRequest());

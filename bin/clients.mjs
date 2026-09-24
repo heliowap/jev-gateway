@@ -1,6 +1,7 @@
 // How each coding agent is pointed at a gateway. Shared by the launchers and the benchmark runner,
 // so a benchmark drives an agent exactly the way `jev-codex`, `jev-claude`, and `jev-opencode` do.
 import { existsSync, readFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -73,6 +74,45 @@ const OPENCODE_PROVIDER = "jev-gateway";
 const OPENCODE_ZEN_UPSTREAM = "https://opencode.ai/zen/v1";
 const OPENCODE_ZEN_PROVIDERS = ["opencode", "opencode-go"];
 
+function opencodeMajorVersion() {
+  try {
+    const version = execFileSync("opencode", ["--version"], { encoding: "utf8", timeout: 2_000 });
+    return Number(version.match(/(?:^|\s)v?(\d+)\./)?.[1]) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** V2's remote provider settings can override a provider URL; model settings apply after them. */
+function zenModelOverrides(origin) {
+  const modelsByProvider = Object.fromEntries(OPENCODE_ZEN_PROVIDERS.map((id) => [id, new Set()]));
+  try {
+    const cache = process.env.XDG_CACHE_HOME || join(homedir(), ".cache");
+    const catalogue = JSON.parse(readFileSync(join(cache, "opencode", "models.json"), "utf8"));
+    for (const id of OPENCODE_ZEN_PROVIDERS) {
+      if (isObject(catalogue[id]?.models)) for (const model of Object.keys(catalogue[id].models)) modelsByProvider[id].add(model);
+    }
+  } catch {
+    // The selected model below still works before OpenCode populates its catalogue.
+  }
+  const config = readOpencodeConfig(process.env, process.cwd());
+  const argv = process.argv.slice(2);
+  const requested = argv.flatMap((arg, i) =>
+    arg === "-m" || arg === "--model" ? [argv[i + 1]] : arg.startsWith("--model=") ? [arg.slice(8)] : [],
+  ).at(-1);
+  for (const ref of [config.model, requested]) {
+    const id = typeof ref === "string" ? ref.split("/")[0] : isObject(ref) ? ref.providerID : undefined;
+    const model = typeof ref === "string" ? ref.slice(ref.indexOf("/") + 1).split("#")[0] : isObject(ref) ? ref.model : undefined;
+    if (OPENCODE_ZEN_PROVIDERS.includes(id) && typeof model === "string" && model) modelsByProvider[id].add(model);
+  }
+  const baseURL = `${origin}/v1`;
+  const providers = Object.fromEntries(OPENCODE_ZEN_PROVIDERS.flatMap((id) => modelsByProvider[id].size ? [[id, {
+    settings: { baseURL },
+    models: Object.fromEntries([...modelsByProvider[id]].map((model) => [model, { settings: { baseURL } }])),
+  }]] : []));
+  return Object.keys(providers).length ? providers : undefined;
+}
+
 /** JSONC as OpenCode accepts it: comments and trailing commas go, string contents stay. */
 export function parseJsonc(text) {
   let out = "";
@@ -108,9 +148,10 @@ function mergeDeep(base, over) {
 
 /**
  * The user's OpenCode config, merged the way OpenCode merges it: global files, then OPENCODE_CONFIG,
- * then project files from the repository root down to the working directory, then
- * OPENCODE_CONFIG_DIR. Only read, never written. A file that is missing or does not parse counts
- * as empty: detection is a convenience, and a broken file is OpenCode's to report.
+ * then project files from the repository root down to the working directory (including v2
+ * .opencode directories), then OPENCODE_CONFIG_DIR. Only read, never written. A file that is
+ * missing or does not parse counts as empty: detection is a convenience, and a broken file is
+ * OpenCode's to report.
  */
 function readOpencodeConfig(env, cwd) {
   const globalDir = join(env.XDG_CONFIG_HOME || join(homedir(), ".config"), "opencode");
@@ -122,7 +163,10 @@ function readOpencodeConfig(env, cwd) {
   const files = [
     ...["config.json", "opencode.json", "opencode.jsonc"].map((name) => join(globalDir, name)),
     ...(env.OPENCODE_CONFIG ? [env.OPENCODE_CONFIG] : []),
-    ...projectDirs.flatMap((dir) => [join(dir, "opencode.json"), join(dir, "opencode.jsonc")]),
+    ...projectDirs.flatMap((dir) => [
+      join(dir, "opencode.json"), join(dir, "opencode.jsonc"),
+      join(dir, ".opencode", "opencode.json"), join(dir, ".opencode", "opencode.jsonc"),
+    ]),
     ...(env.OPENCODE_CONFIG_DIR ? [join(env.OPENCODE_CONFIG_DIR, "opencode.json"), join(env.OPENCODE_CONFIG_DIR, "opencode.jsonc")] : []),
   ];
   let config = {};
@@ -162,11 +206,17 @@ export function detectOpencode(env = process.env, cwd = process.cwd()) {
 
   const config = readOpencodeConfig(env, cwd);
   const slash = typeof config.model === "string" ? config.model.indexOf("/") : -1;
-  const id = slash > 0 ? config.model.slice(0, slash) : undefined;
+  const id = slash > 0 ? config.model.slice(0, slash) : isObject(config.model) ? config.model.providerID : undefined;
   if (id && OPENCODE_ZEN_PROVIDERS.includes(id)) return zen;
 
-  const provider = id && id !== OPENCODE_PROVIDER && isObject(config.provider) ? config.provider[id] : undefined;
-  const baseURL = isObject(provider) && provider.npm === "@ai-sdk/openai-compatible" ? provider.options?.baseURL : undefined;
+  const legacy = id && id !== OPENCODE_PROVIDER && isObject(config.provider) ? config.provider[id] : undefined;
+  const native = id && id !== OPENCODE_PROVIDER && isObject(config.providers) ? config.providers[id] : undefined;
+  const baseURL =
+    isObject(native) && ["@ai-sdk/openai-compatible", "aisdk:@ai-sdk/openai-compatible"].includes(native.package)
+      ? native.settings?.baseURL
+      : isObject(legacy) && legacy.npm === "@ai-sdk/openai-compatible"
+        ? legacy.options?.baseURL
+        : undefined;
   if (typeof baseURL === "string") {
     const resolved = baseURL.replace(/\{env:([^}]+)\}/g, (_, name) => env[name] ?? "");
     // `{file:...}` and friends stay unresolved; an upstream that is not a URL would fail every request.
@@ -200,9 +250,11 @@ export function detectOpencode(env = process.env, cwd = process.cwd()) {
  */
 function opencodeInlineConfig(origin, setup = detectOpencode()) {
   if (setup.rebind) {
+    const providers = setup.rebind === OPENCODE_ZEN_PROVIDERS && opencodeMajorVersion() >= 2 ? zenModelOverrides(origin) : undefined;
     return {
       $schema: "https://opencode.ai/config.json",
       provider: Object.fromEntries(setup.rebind.map((id) => [id, { options: { baseURL: `${origin}/v1` } }])),
+      ...(providers ? { providers } : {}),
     };
   }
   return {
@@ -233,10 +285,13 @@ export const opencode = {
     "                                   otherwise https://api.openai.com/v1 (OpenCode Zen when\n" +
     "                                   OPENCODE_API_KEY is set and OPENAI_API_KEY is not)\n" +
     "  JEV_OPENCODE_MODEL               use jev-gateway/<model> on OpenAI instead of following the config",
-  // No `args`: the model default comes from the user's config or the injected one, so a user
-  // `-m provider/model` keeps its documented top priority and every other `opencode` flag forwards
-  // untouched. The two experimental flags stay off for the launched process only (environment,
-  // never a user file): the stable AI SDK provider path above is the supported one.
+  // OpenCode v2 normally reuses a background server that cannot see this process's injected config.
+  // Its private server inherits it; v1 has no --standalone flag.
+  tailArgs: (_origin, argv) => {
+    if (argv.some((arg) => arg === "--standalone" || arg === "--server" || arg.startsWith("--server="))) return [];
+    if (argv[0] && !argv[0].startsWith("-") && !["run", "mini", "models"].includes(argv[0]) && !existsSync(argv[0])) return [];
+    return opencodeMajorVersion() >= 2 ? ["--standalone"] : [];
+  },
   env: (origin) => ({
     OPENCODE_CONFIG_CONTENT: JSON.stringify(opencodeInlineConfig(origin)),
     OPENCODE_EXPERIMENTAL_NATIVE_LLM: "false",
@@ -259,7 +314,7 @@ export const opencode = {
       return (
         `# Keep the gateway running (jev-opencode --start), then add to opencode.json\n` +
         `# (project root or ~/.config/opencode/opencode.json), next to what is already there:\n` +
-        `${JSON.stringify({ provider: config.provider }, null, 2)}\n` +
+        `${JSON.stringify({ provider: config.provider, ...(config.providers ? { providers: config.providers } : {}) }, null, 2)}\n` +
         upstreamNote
       );
     }
@@ -288,4 +343,3 @@ export const gemini = {
     `#   GEMINI_API_BASE=${origin}\n` +
     `#   or endpoint: ${origin}/v1beta\n`,
 };
-
