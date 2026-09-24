@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/app.js";
+import { frame } from "../src/proto/connect.js";
+import { concat, encodeVarint, field, utf8 } from "../src/proto/wire.js";
 import { readUsage } from "../src/usage.js";
 import { chat, fakeJev, settled, testConfig } from "./helpers.js";
 
@@ -66,6 +68,33 @@ describe("readUsage", () => {
 
   it("reports nothing rather than zeros when the reply never said", async () => {
     expect(await readUsage(new Response("<html>bad gateway</html>", { status: 502 }))).toBeUndefined();
+  });
+
+  // exa's stats entry: { 5: counter key, 4: { 1: label, 2: fixed32 float } }, inside a field-28
+  // group's field-2 list.
+  const f32 = (no: number, v: number) => {
+    const bytes = new Uint8Array(4);
+    new DataView(bytes.buffer).setFloat32(0, v, true);
+    return concat(encodeVarint(BigInt(no * 8 + 5)), bytes);
+  };
+  const entry = (key: string, v: number) => field(2, 2, concat(utf8(5, key), field(4, 2, concat(utf8(1, key), f32(2, v)))));
+  const connect = (body: Uint8Array<ArrayBuffer>) =>
+    new Response(body, { headers: { "content-type": "application/connect+proto" } });
+
+  it("reads the token counters an exa stream carries in field 28", async () => {
+    const stats = field(
+      28,
+      2,
+      concat(utf8(1, "Tokens"), entry("input_tokens", 8448), entry("output_tokens", 85), entry("cached_input_tokens", 6752)),
+    );
+    const body = concat(frame(utf8(9, "done")), frame(stats), frame(new TextEncoder().encode("{}"), 0x2));
+    expect(await readUsage(connect(body))).toEqual({ input: 8448, output: 85, cached: 6752, cacheWrite: 0, reasoning: 0 });
+  });
+
+  it("ignores counters it does not know and bodies it cannot peel", async () => {
+    const stats = field(28, 2, concat(utf8(1, "Other"), entry("something_else", 3)));
+    expect(await readUsage(connect(frame(stats)))).toBeUndefined();
+    expect(await readUsage(connect(Uint8Array.of(1, 2, 3)))).toBeUndefined();
   });
 });
 

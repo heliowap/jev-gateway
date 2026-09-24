@@ -1,3 +1,6 @@
+import { peel } from "./proto/connect.js";
+import { readFields, text } from "./proto/wire.js";
+
 /**
  * Token usage of one LLM call, in one vocabulary whatever the provider's. `input` is everything
  * the model read, cached or not — Anthropic reports its three input buckets separately, OpenAI
@@ -61,12 +64,43 @@ function collect(payload: unknown, into: Partial<Usage>): void {
   }
 }
 
+/** exa's counters ride in field-28 stats groups: entries keyed by name, valued as fixed32
+ *  floats — the wire carries "model" strings in the same shape, so unknown keys are skipped. */
+async function readConnectUsage(response: Response): Promise<Usage | undefined> {
+  const found: Partial<Usage> = {};
+  try {
+    for (const { payload } of peel(new Uint8Array(await response.arrayBuffer()))) {
+      for (const group of readFields(payload)) {
+        if (group.field !== 28) continue;
+        for (const entry of readFields(group.bytes ?? new Uint8Array())) {
+          if (entry.field !== 2) continue;
+          const e = readFields(entry.bytes ?? new Uint8Array());
+          const wrapper = e.find((f) => f.field === 4)?.bytes;
+          const value = wrapper ? readFields(wrapper).find((f) => f.field === 2)?.bytes : undefined;
+          if (!value || value.length < 4) continue;
+          const v = new DataView(value.buffer, value.byteOffset, 4).getFloat32(0, true);
+          const key = text(e.find((f) => f.field === 5));
+          if (key === "input_tokens") found.input = v;
+          else if (key === "output_tokens") found.output = v;
+          else if (key === "cached_input_tokens") found.cached = v;
+        }
+      }
+    }
+  } catch {
+    // A stream that peels only partway reports what it read; unreadable bytes report nothing.
+  }
+  if (found.input === undefined && found.output === undefined) return undefined;
+  return { input: 0, output: 0, cached: 0, cacheWrite: 0, reasoning: 0, ...found };
+}
+
 /**
  * Read a reply to its end and report what it cost. Works on a clone, in the background: the
  * client's own stream is never delayed. A stream cut short (Codex hangs up as soon as it has
  * `response.completed`) still yields whatever usage arrived before the cut.
  */
 export async function readUsage(response: Response): Promise<Usage | undefined> {
+  // Connect streams are binary: peel envelopes instead of scanning lines.
+  if (response.headers.get("content-type")?.includes("connect+proto")) return readConnectUsage(response);
   const found: Partial<Usage> = {};
   // Told apart by content, not by header: the ChatGPT Codex backend streams events without
   // sending any content-type at all.
